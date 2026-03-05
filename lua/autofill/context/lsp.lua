@@ -5,6 +5,10 @@ local symbol_cache = {}
 local diagnostic_cache = {}
 local symbol_revision = {}
 local diagnostic_revision = {}
+local symbol_refresh_timers = {}
+local symbol_request_generation = {}
+
+local SYMBOL_REFRESH_DEBOUNCE_MS = 200
 
 local symbol_kind_names = {
   [1] = 'File', [2] = 'Module', [3] = 'Namespace', [4] = 'Package',
@@ -35,20 +39,109 @@ local function flatten_symbols(symbols, container, result)
   return result
 end
 
-function M.refresh_symbols(bufnr)
+local function bump_revision(revisions, bufnr)
+  revisions[bufnr] = (revisions[bufnr] or 0) + 1
+end
+
+local function bump_symbol_request_generation(bufnr)
+  symbol_request_generation[bufnr] = (symbol_request_generation[bufnr] or 0) + 1
+  return symbol_request_generation[bufnr]
+end
+
+local function close_symbol_timer(bufnr)
+  local timer = symbol_refresh_timers[bufnr]
+  if not timer then return end
+
+  timer:stop()
+  timer:close()
+  symbol_refresh_timers[bufnr] = nil
+end
+
+local function ensure_symbol_timer(bufnr)
+  local timer = symbol_refresh_timers[bufnr]
+  if timer then
+    return timer
+  end
+
+  timer = vim.uv.new_timer()
+  if not timer then
+    return nil
+  end
+
+  symbol_refresh_timers[bufnr] = timer
+  return timer
+end
+
+local function flatten_symbol_results(results)
+  local merged = {}
+  local seen = {}
+
+  for _, response in pairs(results or {}) do
+    local result = response and response.result
+    if result then
+      for _, symbol in ipairs(flatten_symbols(result)) do
+        local key = table.concat({
+          symbol.name or '',
+          symbol.kind or '',
+          tostring(symbol.line or 0),
+          symbol.container or '',
+        }, '\0')
+        if not seen[key] then
+          seen[key] = true
+          merged[#merged + 1] = symbol
+        end
+      end
+    end
+  end
+
+  return merged
+end
+
+local function request_symbols(bufnr)
+  if not bufnr or bufnr == 0 then return end
+  if not vim.api.nvim_buf_is_valid(bufnr) then
+    close_symbol_timer(bufnr)
+    return
+  end
+
+  local request_generation = bump_symbol_request_generation(bufnr)
   local clients = vim.lsp.get_clients({ bufnr = bufnr, method = 'textDocument/documentSymbol' })
   if #clients == 0 then
     symbol_cache[bufnr] = nil
-    symbol_revision[bufnr] = (symbol_revision[bufnr] or 0) + 1
+    bump_revision(symbol_revision, bufnr)
     return
   end
 
   local params = { textDocument = vim.lsp.util.make_text_document_params(bufnr) }
-  vim.lsp.buf_request(bufnr, 'textDocument/documentSymbol', params, function(err, result)
-    if err or not result then return end
-    symbol_cache[bufnr] = flatten_symbols(result)
-    symbol_revision[bufnr] = (symbol_revision[bufnr] or 0) + 1
+  vim.lsp.buf_request_all(bufnr, 'textDocument/documentSymbol', params, function(results)
+    if request_generation ~= symbol_request_generation[bufnr] then return end
+    if not vim.api.nvim_buf_is_valid(bufnr) then return end
+
+    local flattened = flatten_symbol_results(results)
+    symbol_cache[bufnr] = #flattened > 0 and flattened or nil
+    bump_revision(symbol_revision, bufnr)
   end)
+end
+
+function M.refresh_symbols(bufnr, opts)
+  opts = opts or {}
+  if not bufnr or bufnr == 0 then return end
+  if not vim.api.nvim_buf_is_valid(bufnr) then
+    close_symbol_timer(bufnr)
+    return
+  end
+
+  local timer = ensure_symbol_timer(bufnr)
+  if not timer then
+    request_symbols(bufnr)
+    return
+  end
+
+  timer:stop()
+  local delay = opts.immediate and 0 or (opts.delay_ms or SYMBOL_REFRESH_DEBOUNCE_MS)
+  timer:start(delay, 0, vim.schedule_wrap(function()
+    request_symbols(bufnr)
+  end))
 end
 
 function M.get_symbols(bufnr)
@@ -122,10 +215,21 @@ function M.get_context(bufnr, cursor)
 end
 
 function M.clear(bufnr)
+  close_symbol_timer(bufnr)
   symbol_cache[bufnr] = nil
   diagnostic_cache[bufnr] = nil
-  symbol_revision[bufnr] = (symbol_revision[bufnr] or 0) + 1
-  diagnostic_revision[bufnr] = (diagnostic_revision[bufnr] or 0) + 1
+  bump_symbol_request_generation(bufnr)
+  bump_revision(symbol_revision, bufnr)
+  bump_revision(diagnostic_revision, bufnr)
+end
+
+function M.stop()
+  for bufnr in pairs(symbol_refresh_timers) do
+    close_symbol_timer(bufnr)
+  end
+  for bufnr in pairs(symbol_request_generation) do
+    bump_symbol_request_generation(bufnr)
+  end
 end
 
 function M.get_revision(bufnr)

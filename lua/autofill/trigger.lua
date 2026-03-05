@@ -252,8 +252,14 @@ function M.start()
     callback = on_buf_leave,
   })
 
-  -- LSP symbol refresh
-  vim.api.nvim_create_autocmd({ 'BufEnter', 'TextChanged', 'LspAttach' }, {
+  vim.api.nvim_create_autocmd({ 'BufEnter', 'LspAttach' }, {
+    group = augroup,
+    callback = function(ev)
+      lsp_context.refresh_symbols(ev.buf, { immediate = true })
+    end,
+  })
+
+  vim.api.nvim_create_autocmd({ 'TextChanged', 'TextChangedI' }, {
     group = augroup,
     callback = function(ev)
       lsp_context.refresh_symbols(ev.buf)
@@ -302,6 +308,7 @@ function M.stop()
   if bufnr and vim.api.nvim_buf_is_valid(bufnr) then
     cache.clear_quick_for_buffer(bufnr)
   end
+  lsp_context.stop()
   request.cancel()
   ghost.clear()
   util.log('debug', 'Trigger system stopped')
