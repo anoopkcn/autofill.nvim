@@ -2,6 +2,19 @@ local M = {}
 
 local _enabled = nil -- nil = use config default
 
+local function sync_runtime_state()
+  local ghost = require('autofill.display.ghost')
+  local trigger = require('autofill.trigger')
+
+  ghost.setup_keymaps({ enable_direct = M.is_enabled() })
+
+  if M.is_enabled() then
+    trigger.start()
+  else
+    trigger.stop()
+  end
+end
+
 function M.setup(opts)
   local config = require('autofill.config')
   config.setup(opts)
@@ -10,13 +23,7 @@ function M.setup(opts)
   -- Define highlight group
   vim.api.nvim_set_hl(0, 'AutofillGhost', { link = 'Comment', default = true })
 
-  -- Setup keymaps
-  require('autofill.display.ghost').setup_keymaps()
-
-  -- Start the trigger system if enabled
-  if M.is_enabled() then
-    require('autofill.trigger').start()
-  end
+  sync_runtime_state()
 end
 
 function M.is_enabled()
@@ -27,16 +34,21 @@ function M.is_enabled()
 end
 
 function M.enable()
+  local was_enabled = M.is_enabled()
   _enabled = true
-  require('autofill.trigger').start()
-  require('autofill.util').log('info', 'Enabled')
+  sync_runtime_state()
+  if not was_enabled then
+    require('autofill.util').log('info', 'Enabled')
+  end
 end
 
 function M.disable()
+  local was_enabled = M.is_enabled()
   _enabled = false
-  require('autofill.trigger').stop()
-  require('autofill.display.ghost').teardown_keymaps()
-  require('autofill.util').log('info', 'Disabled')
+  sync_runtime_state()
+  if was_enabled then
+    require('autofill.util').log('info', 'Disabled')
+  end
 end
 
 function M.toggle()

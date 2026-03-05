@@ -1,3 +1,5 @@
+local util = require('autofill.util')
+
 local M = {}
 
 local ns = vim.api.nvim_create_namespace('autofill_ghost')
@@ -10,6 +12,149 @@ local state = {
 }
 local last_render_time = 0
 local THROTTLE_MS = 75
+local plug_keymaps_installed = false
+local direct_keymaps = {}
+
+local PLUG_MAPPINGS = {
+  accept = '<Plug>(AutofillAccept)',
+  accept_word = '<Plug>(AutofillAcceptWord)',
+  dismiss = '<Plug>(AutofillDismiss)',
+}
+
+local FALLBACK_MAPPINGS = {
+  accept = '<Plug>(AutofillFallbackAccept)',
+  accept_word = '<Plug>(AutofillFallbackAcceptWord)',
+  dismiss = '<Plug>(AutofillFallbackDismiss)',
+}
+
+local KEYMAP_ORDER = { 'accept', 'accept_word', 'dismiss' }
+
+local KEYMAP_SPECS = {
+  accept = {
+    desc = 'Autofill: accept suggestion',
+    plug = PLUG_MAPPINGS.accept,
+    invoke = function()
+      vim.schedule(M.accept)
+    end,
+  },
+  accept_word = {
+    desc = 'Autofill: accept word',
+    plug = PLUG_MAPPINGS.accept_word,
+    invoke = function()
+      vim.schedule(M.accept_word)
+    end,
+  },
+  dismiss = {
+    desc = 'Autofill: dismiss suggestion',
+    plug = PLUG_MAPPINGS.dismiss,
+    invoke = function()
+      M.clear()
+    end,
+  },
+}
+
+local function delete_insert_mapping(lhs)
+  if lhs then
+    pcall(vim.keymap.del, 'i', lhs)
+  end
+end
+
+local function get_insert_mapping(lhs)
+  local mapping = vim.fn.maparg(lhs, 'i', false, true)
+  if type(mapping) == 'table' and not vim.tbl_isempty(mapping) then
+    return mapping
+  end
+  return nil
+end
+
+local function ensure_plug_keymaps()
+  if plug_keymaps_installed then return end
+
+  for _, name in ipairs(KEYMAP_ORDER) do
+    local spec = KEYMAP_SPECS[name]
+    vim.keymap.set('i', spec.plug, function()
+      if M.is_visible() then
+        spec.invoke()
+      end
+    end, { silent = true, desc = spec.desc })
+  end
+
+  plug_keymaps_installed = true
+end
+
+local function install_fallback_keymap(name, mapping)
+  local plug = FALLBACK_MAPPINGS[name]
+  if not plug or not mapping then
+    return nil
+  end
+
+  if mapping.buffer == 1 then
+    util.log('warn', 'Skipping keymap wrap for buffer-local mapping ' .. mapping.lhs .. '. Use ' .. KEYMAP_SPECS[name].plug .. ' instead.')
+    return nil
+  end
+
+  delete_insert_mapping(plug)
+
+  local opts = {
+    expr = mapping.expr == 1,
+    noremap = mapping.noremap == 1,
+    nowait = mapping.nowait == 1,
+    replace_keycodes = mapping.replace_keycodes == 1,
+    silent = mapping.silent == 1,
+    desc = mapping.desc,
+  }
+
+  if mapping.callback then
+    vim.keymap.set('i', plug, mapping.callback, opts)
+  elseif mapping.rhs and mapping.rhs ~= '' then
+    vim.keymap.set('i', plug, mapping.rhs, opts)
+  else
+    return nil
+  end
+
+  return plug
+end
+
+local function feed_keys(lhs, remap)
+  local keys = vim.api.nvim_replace_termcodes(lhs, true, false, true)
+  vim.api.nvim_feedkeys(keys, remap and 'im' or 'in', false)
+end
+
+local function run_direct_fallback(name, lhs)
+  local mapping = direct_keymaps[name]
+  if mapping and mapping.fallback then
+    feed_keys(mapping.fallback, true)
+    return
+  end
+
+  feed_keys(lhs, false)
+end
+
+local function install_direct_keymap(name, lhs)
+  local spec = KEYMAP_SPECS[name]
+  if not spec or not lhs then return end
+
+  local existing = get_insert_mapping(lhs)
+  if existing and existing.buffer == 1 then
+    util.log('warn', 'Skipping keymap ' .. lhs .. '; existing buffer-local mapping cannot be wrapped safely. Use ' .. spec.plug .. ' instead.')
+    return
+  end
+
+  local fallback = install_fallback_keymap(name, existing)
+
+  vim.keymap.set('i', lhs, function()
+    if M.is_visible() then
+      spec.invoke()
+      return
+    end
+    run_direct_fallback(name, lhs)
+  end, { noremap = true, silent = true, desc = spec.desc })
+
+  direct_keymaps[name] = {
+    lhs = lhs,
+    fallback = fallback,
+  }
+end
 
 function M.is_visible()
   return state.text ~= nil
@@ -172,48 +317,51 @@ function M.advance(bufnr)
   return false
 end
 
-function M.setup_keymaps()
+function M.get_plug_mappings()
+  return vim.deepcopy(PLUG_MAPPINGS)
+end
+
+function M.setup_keymaps(opts)
+  opts = opts or {}
+
   local config = require('autofill.config').get()
-  local keymaps = config.keymaps
+  local keymaps = config.keymaps or {}
+  local enable_direct = opts.enable_direct ~= false
 
-  if keymaps.accept then
-    vim.keymap.set('i', keymaps.accept, function()
-      if M.is_visible() then
-        vim.schedule(M.accept)
-        return ''
-      end
-      return vim.api.nvim_replace_termcodes(keymaps.accept, true, false, true)
-    end, { expr = true, noremap = true, desc = 'Autofill: accept suggestion' })
+  M.teardown_keymaps({ direct = true })
+  ensure_plug_keymaps()
+
+  if not enable_direct then
+    return
   end
 
-  if keymaps.accept_word then
-    vim.keymap.set('i', keymaps.accept_word, function()
-      if M.is_visible() then
-        vim.schedule(M.accept_word)
-        return ''
-      end
-      return vim.api.nvim_replace_termcodes(keymaps.accept_word, true, false, true)
-    end, { expr = true, noremap = true, desc = 'Autofill: accept word' })
-  end
-
-  if keymaps.dismiss then
-    vim.keymap.set('i', keymaps.dismiss, function()
-      if M.is_visible() then
-        M.clear()
-        return ''
-      end
-      return vim.api.nvim_replace_termcodes(keymaps.dismiss, true, false, true)
-    end, { expr = true, noremap = true, desc = 'Autofill: dismiss suggestion' })
+  for _, name in ipairs(KEYMAP_ORDER) do
+    local lhs = keymaps[name]
+    if lhs then
+      install_direct_keymap(name, lhs)
+    end
   end
 end
 
-function M.teardown_keymaps()
-  local config = require('autofill.config').get()
-  local keymaps = config.keymaps
-  for _, key in ipairs({ keymaps.accept, keymaps.accept_word, keymaps.dismiss }) do
-    if key then
-      pcall(vim.keymap.del, 'i', key)
+function M.teardown_keymaps(opts)
+  opts = opts or {}
+
+  if opts.direct ~= false then
+    for _, name in ipairs(KEYMAP_ORDER) do
+      local mapping = direct_keymaps[name]
+      if mapping then
+        delete_insert_mapping(mapping.lhs)
+        delete_insert_mapping(mapping.fallback)
+      end
+      direct_keymaps[name] = nil
     end
+  end
+
+  if opts.plug then
+    for _, name in ipairs(KEYMAP_ORDER) do
+      delete_insert_mapping(PLUG_MAPPINGS[name])
+    end
+    plug_keymaps_installed = false
   end
 end
 

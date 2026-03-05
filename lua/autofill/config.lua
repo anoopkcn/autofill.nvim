@@ -18,9 +18,9 @@ M.defaults = {
   },
   filetypes_exclude = {},
   keymaps = {
-    accept = '<Tab>',
-    accept_word = '<C-f>',
-    dismiss = '<C-]>',
+    accept = nil,
+    accept_word = nil,
+    dismiss = nil,
   },
   claude = {
     api_key_env = 'ANTHROPIC_API_KEY',
