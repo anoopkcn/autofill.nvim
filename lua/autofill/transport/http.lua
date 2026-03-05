@@ -1,8 +1,60 @@
-local util = require('autofill.util')
-
 local M = {}
+local STATUS_MARKER = '\n__AUTOFILL_HTTP_STATUS__:'
+local STATUS_PATTERN = STATUS_MARKER .. '(%d%d%d)\n?$'
+local ERROR_MT = {
+  __tostring = function(err)
+    return err.message or 'Request failed'
+  end,
+}
+
+local function make_error(kind, fields)
+  fields = fields or {}
+  fields.ok = false
+  fields.kind = kind
+  return setmetatable(fields, ERROR_MT)
+end
+
+local function split_http_output(raw)
+  raw = raw or ''
+
+  local status = tonumber(raw:match(STATUS_PATTERN))
+  if status then
+    raw = raw:gsub(STATUS_PATTERN, '', 1)
+  end
+
+  return raw, status
+end
+
+local function format_transport_message(result)
+  local stderr = vim.trim(result.stderr or '')
+  if stderr ~= '' then
+    return stderr:match('^[^\n]*') or stderr
+  end
+  return 'curl exited with code ' .. tostring(result.code)
+end
+
+local function format_http_message(status, body)
+  local api_msg = M._parse_error(body or '')
+  if api_msg and api_msg ~= '' then
+    return 'HTTP ' .. tostring(status) .. ': ' .. api_msg
+  end
+  return 'HTTP ' .. tostring(status)
+end
+
+local function make_success(status, body, stderr)
+  return {
+    ok = true,
+    status = status,
+    body = body or '',
+    stderr = stderr or '',
+  }
+end
 
 function M._parse_error(raw)
+  if not raw or raw == '' then
+    return ''
+  end
+
   local ok, data = pcall(vim.json.decode, raw)
   if ok then
     -- Anthropic: { error: { message: "..." } }
@@ -16,7 +68,8 @@ function M._parse_error(raw)
     end
   end
   -- Fallback: first line of raw output
-  return raw:match('^[^\n]*'):sub(1, 200)
+  local first_line = raw:match('^[^\n]*') or raw
+  return first_line:sub(1, 200)
 end
 
 function M.request(opts)
@@ -29,7 +82,14 @@ function M.request(opts)
   local on_error = opts.on_error
   local stream = opts.stream or false
 
-  local args = { 'curl', '-s', '-X', 'POST' }
+  local args = {
+    'curl',
+    '-sS',
+    '-X',
+    'POST',
+    '-w',
+    STATUS_MARKER .. '%{http_code}\n',
+  }
 
   for key, value in pairs(headers) do
     table.insert(args, '-H')
@@ -53,15 +113,14 @@ function M.request(opts)
   local stdout_buf = ''
   local raw_chunks = {}
   local got_sse = false
+  local stream_error = nil
 
   local system_opts = {}
 
   if stream and on_data then
     system_opts.stdout = function(err, data)
       if err then
-        vim.schedule(function()
-          if on_error then on_error(err) end
-        end)
+        stream_error = tostring(err)
         return
       end
       if not data then return end
@@ -87,26 +146,63 @@ function M.request(opts)
 
   local obj = vim.system(args, system_opts, function(result)
     vim.schedule(function()
-      if result.code ~= 0 then
-        local msg = result.stderr or ('curl exited with code ' .. result.code)
-        if on_error then on_error(msg) end
+      local output = stream and table.concat(raw_chunks) or result.stdout or ''
+      local local_status
+      output, local_status = split_http_output(output)
+
+      if stream_error then
+        if on_error then
+          on_error(make_error('transport', {
+            code = result.code,
+            status = local_status,
+            body = output,
+            stderr = result.stderr or stream_error,
+            message = stream_error,
+          }))
+        end
         return
       end
 
-      -- In streaming mode, stdout was consumed by the callback
-      local output = stream and table.concat(raw_chunks) or result.stdout
+      if result.code ~= 0 then
+        if on_error then
+          on_error(make_error('transport', {
+            code = result.code,
+            status = local_status,
+            body = output,
+            stderr = result.stderr or '',
+            message = format_transport_message(result),
+          }))
+        end
+        return
+      end
+
+      if local_status and (local_status < 200 or local_status >= 300) then
+        if on_error then
+          on_error(make_error('http', {
+            status = local_status,
+            body = output,
+            stderr = result.stderr or '',
+            message = format_http_message(local_status, output),
+          }))
+        end
+        return
+      end
 
       -- If streaming but never got SSE data, the response is likely an error
       if stream and not got_sse and output and output ~= '' then
-        local api_msg = M._parse_error(output)
         if on_error then
-          on_error(api_msg)
+          on_error(make_error('protocol', {
+            status = local_status,
+            body = output,
+            stderr = result.stderr or '',
+            message = 'Expected streaming response but received non-SSE body: ' .. M._parse_error(output),
+          }))
         end
         return
       end
 
       if on_done then
-        on_done(output)
+        on_done(make_success(local_status, output, result.stderr))
       end
     end)
   end)

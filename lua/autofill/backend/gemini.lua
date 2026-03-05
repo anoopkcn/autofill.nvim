@@ -76,10 +76,11 @@ function M.complete(ctx, opts)
         end
       end
     end,
-  }, function(_stdout)
+  }, function(response)
     -- Fallback: if streaming didn't collect anything, parse full response
-    if #collected == 0 and _stdout and _stdout ~= '' then
-      local ok, resp = pcall(vim.json.decode, _stdout)
+    local body = response and response.body or ''
+    if #collected == 0 and body ~= '' then
+      local ok, resp = pcall(vim.json.decode, body)
       if ok
         and resp.candidates
         and resp.candidates[1]

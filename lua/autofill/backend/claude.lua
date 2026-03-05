@@ -60,11 +60,12 @@ function M.complete(ctx, opts)
         end
       end
     end,
-  }, function(_stdout)
+  }, function(response)
     -- Streaming done; if we collected via on_data, use that.
     -- If not (non-streaming fallback), parse stdout.
-    if #collected == 0 and _stdout and _stdout ~= '' then
-      local ok, resp = pcall(vim.json.decode, _stdout)
+    local body = response and response.body or ''
+    if #collected == 0 and body ~= '' then
+      local ok, resp = pcall(vim.json.decode, body)
       if ok and resp.content and resp.content[1] then
         table.insert(collected, resp.content[1].text or '')
       end

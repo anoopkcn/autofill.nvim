@@ -31,13 +31,19 @@ function M.send(opts, callback)
     on_done = function(stdout)
       if is_stale() then return end
       active_obj = nil
+      if opts.on_status and stdout and stdout.status then
+        opts.on_status(stdout.status, stdout)
+      end
       if callback then callback(stdout) end
     end,
     on_error = function(err)
       if is_stale() then return end
       active_obj = nil
+      if opts.on_status and err and err.status then
+        opts.on_status(err.status, err)
+      end
       if opts.on_error then
-        opts.on_error(tostring(err))
+        opts.on_error(err)
       else
         util.log('warn', 'Completion failed: ' .. tostring(err))
       end
