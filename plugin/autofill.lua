@@ -18,6 +18,10 @@ vim.api.nvim_create_user_command('Autofill', function(cmd)
     )
     vim.notify('[autofill] Sending test request to ' .. require('autofill.config').get().backend .. '...')
     require('autofill.backend').complete(ctx, function(suggestion)
+      if not suggestion then
+        vim.notify('[autofill] Backend returned nil', vim.log.levels.WARN)
+        return
+      end
       vim.notify('[autofill] Got suggestion (' .. #suggestion .. ' chars):\n' .. suggestion)
     end)
   else

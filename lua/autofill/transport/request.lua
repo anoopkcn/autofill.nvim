@@ -16,8 +16,6 @@ function M.send(opts, callback)
     return my_id ~= request_id
   end
 
-  local collected = ''
-
   active_obj = http.request({
     url = opts.url,
     headers = opts.headers,
@@ -46,6 +44,7 @@ function M.send(opts, callback)
 end
 
 function M.cancel()
+  request_id = request_id + 1
   if active_obj then
     local obj = active_obj
     active_obj = nil

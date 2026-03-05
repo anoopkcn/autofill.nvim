@@ -51,7 +51,7 @@ function M.request(opts)
   table.insert(args, url)
 
   local stdout_buf = ''
-  local raw_output = ''
+  local raw_chunks = {}
   local got_sse = false
 
   local system_opts = {}
@@ -65,7 +65,7 @@ function M.request(opts)
         return
       end
       if not data then return end
-      raw_output = raw_output .. data
+      table.insert(raw_chunks, data)
       stdout_buf = stdout_buf .. data
       while true do
         local nl = stdout_buf:find('\n')
@@ -94,7 +94,7 @@ function M.request(opts)
       end
 
       -- In streaming mode, stdout was consumed by the callback
-      local output = stream and raw_output or result.stdout
+      local output = stream and table.concat(raw_chunks) or result.stdout
 
       -- If streaming but never got SSE data, the response is likely an error
       if stream and not got_sse and output and output ~= '' then

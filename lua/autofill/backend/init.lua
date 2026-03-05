@@ -2,7 +2,7 @@ local util = require('autofill.util')
 
 local M = {}
 
-function M.complete(ctx, callback)
+function M.complete(ctx, opts)
   local config = require('autofill.config').get()
   local backend_name = config.backend
 
@@ -12,7 +12,7 @@ function M.complete(ctx, callback)
     return
   end
 
-  backend.complete(ctx, callback)
+  backend.complete(ctx, opts)
 end
 
 return M

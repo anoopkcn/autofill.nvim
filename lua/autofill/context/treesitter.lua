@@ -5,8 +5,12 @@ local M = {}
 local scope_patterns = { 'function', 'method', 'class', 'module', 'struct', 'impl', 'interface' }
 
 local function is_scope_node(node_type)
+  -- Skip container nodes that aren't meaningful scopes
+  if node_type:match('_body$') or node_type:match('_block$') or node_type:match('_list$') then
+    return false
+  end
   for _, pattern in ipairs(scope_patterns) do
-    if node_type:find(pattern) then
+    if string.find(node_type, pattern, 1, true) then
       return true
     end
   end

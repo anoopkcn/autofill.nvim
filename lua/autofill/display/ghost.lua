@@ -8,6 +8,8 @@ local state = {
   text = nil,
   extmark_id = nil,
 }
+local last_render_time = 0
+local THROTTLE_MS = 50
 
 function M.is_visible()
   return state.text ~= nil
@@ -17,10 +19,18 @@ function M.get_state()
   return state
 end
 
-function M.show(bufnr, line, col, text)
-  M.clear()
-
+function M.show(bufnr, line, col, text, is_partial)
   if not text or text == '' then return end
+
+  -- Throttle partial (streaming) renders to avoid flicker
+  if is_partial then
+    local now = vim.uv.now()
+    if now - last_render_time < THROTTLE_MS then
+      return
+    end
+  end
+
+  M.clear()
 
   state.bufnr = bufnr
   state.line = line
@@ -28,6 +38,7 @@ function M.show(bufnr, line, col, text)
   state.text = text
 
   M._render()
+  last_render_time = vim.uv.now()
 end
 
 function M._render()
@@ -189,6 +200,16 @@ function M.setup_keymaps()
       end
       return vim.api.nvim_replace_termcodes(keymaps.dismiss, true, false, true)
     end, { expr = true, noremap = true, desc = 'Autofill: dismiss suggestion' })
+  end
+end
+
+function M.teardown_keymaps()
+  local config = require('autofill.config').get()
+  local keymaps = config.keymaps
+  for _, key in ipairs({ keymaps.accept, keymaps.accept_word, keymaps.dismiss }) do
+    if key then
+      pcall(vim.keymap.del, 'i', key)
+    end
   end
 end
 

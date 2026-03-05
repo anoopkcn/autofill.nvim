@@ -9,6 +9,12 @@ M.defaults = {
   context_ratio = 0.75,
   max_tokens = 256,
   log_level = 'warn',
+  streaming_display = true,
+  neighbors = {
+    enabled = true,
+    budget = 4000,
+    max_files = 3,
+  },
   filetypes_exclude = {},
   keymaps = {
     accept = '<Tab>',
@@ -37,7 +43,7 @@ M.defaults = {
   },
 }
 
-M.options = {}
+M.options = vim.tbl_deep_extend('force', {}, M.defaults)
 
 function M.setup(opts)
   M.options = vim.tbl_deep_extend('force', {}, M.defaults, opts or {})

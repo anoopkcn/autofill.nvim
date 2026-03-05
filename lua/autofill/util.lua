@@ -16,17 +16,23 @@ function M.log(level, msg)
   local first_line = msg:match('^[^\n]*')
   local text = '[autofill] ' .. first_line
 
+  -- Truncate to terminal width to avoid "Press ENTER" prompt
+  local max_width = vim.o.columns - 1
+  if #text > max_width then
+    text = text:sub(1, max_width - 3) .. '...'
+  end
+
   vim.schedule(function()
     if msg_level >= vim.log.levels.WARN then
       -- Errors/warnings: always visible — brief echo in insert mode, notify otherwise
       if vim.fn.mode() == 'i' then
-        vim.api.nvim_echo({ { text, msg_level == vim.log.levels.ERROR and 'ErrorMsg' or 'WarningMsg' } }, true, {})
+        vim.api.nvim_echo({ { text, msg_level == vim.log.levels.ERROR and 'ErrorMsg' or 'WarningMsg' } }, false, {})
       else
         vim.notify(text, msg_level)
       end
     else
-      -- Debug/info: silent, only in :messages
-      vim.api.nvim_echo({ { text, 'Comment' } }, true, {})
+      -- Debug/info: silent, no history to avoid triggering prompt
+      vim.api.nvim_echo({ { text, 'Comment' } }, false, {})
     end
   end)
 end
