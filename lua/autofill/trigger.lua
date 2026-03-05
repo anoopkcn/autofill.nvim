@@ -177,6 +177,13 @@ local function schedule_complete()
   end))
 end
 
+local function clear_pending_completion()
+  pending_snapshot = nil
+  if timer then
+    timer:stop()
+  end
+end
+
 local function on_text_changed()
   if not require('autofill').is_enabled() then return end
 
@@ -193,8 +200,9 @@ local function on_text_changed()
   change_seq = change_seq + 1
 
   -- Try to advance existing ghost text
-  if ghost.is_visible() then
-    ghost.advance(bufnr)
+  if ghost.is_visible() and ghost.advance(bufnr) then
+    clear_pending_completion()
+    return
   end
 
   pending_snapshot = make_snapshot(
@@ -209,10 +217,7 @@ local function on_text_changed()
 end
 
 local function on_insert_leave()
-  if timer then
-    timer:stop()
-  end
-  pending_snapshot = nil
+  clear_pending_completion()
   active_request_seq = 0
   request.cancel()
   ghost.clear()
@@ -220,10 +225,7 @@ end
 
 local function on_buf_leave()
   local bufnr = vim.api.nvim_get_current_buf()
-  if timer then
-    timer:stop()
-  end
-  pending_snapshot = nil
+  clear_pending_completion()
   active_request_seq = 0
   cache.clear_quick_for_buffer(bufnr)
   request.cancel()
