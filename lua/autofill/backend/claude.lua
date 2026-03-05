@@ -54,7 +54,7 @@ function M.complete(ctx, opts)
   end
 
   local user_message = prompt.build_user_message(ctx)
-  util.log('debug', 'Claude prompt:\n' .. user_message)
+  util.log('debug', 'Claude prompt prepared (' .. #user_message .. ' chars)')
 
   local use_stream = config.streaming_display
   local state = { text = '' }
@@ -96,7 +96,7 @@ function M.complete(ctx, opts)
     local result = trim_result(state.text)
 
     if result ~= '' then
-      util.log('debug', 'Claude response: ' .. result)
+      util.log('debug', 'Claude response received (' .. #result .. ' chars)')
       if opts.on_complete then opts.on_complete(result) end
     else
       util.log('debug', 'Claude returned empty response')

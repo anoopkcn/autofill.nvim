@@ -7,16 +7,62 @@ local level_map = {
   error = vim.log.levels.ERROR,
 }
 
-local function format_text(msg)
-  local text = '[autofill] ' .. msg
+local function cmdline_width()
+  return math.max(vim.o.columns - 1, 1)
+end
 
-  -- Truncate to terminal width to avoid "Press ENTER" prompt
-  local max_width = vim.o.columns - 1
-  if #text > max_width then
-    text = text:sub(1, max_width - 3) .. '...'
+local function truncate_display(text, max_width)
+  text = tostring(text or '')
+  max_width = math.max(max_width or cmdline_width(), 1)
+
+  if vim.fn.strdisplaywidth(text) <= max_width then
+    return text
   end
 
-  return text
+  if max_width <= 3 then
+    return string.rep('.', max_width)
+  end
+
+  local limit = max_width - 3
+  local chars = vim.fn.strchars(text)
+  local low = 0
+  local high = chars
+
+  while low < high do
+    local mid = math.floor((low + high + 1) / 2)
+    local slice = vim.fn.strcharpart(text, 0, mid)
+    if vim.fn.strdisplaywidth(slice) <= limit then
+      low = mid
+    else
+      high = mid - 1
+    end
+  end
+
+  return vim.fn.strcharpart(text, 0, low) .. '...'
+end
+
+function M.preview_text(text, opts)
+  opts = opts or {}
+  text = tostring(text or '')
+
+  if opts.single_line then
+    text = text:gsub('%s+', ' ')
+    text = text:gsub('^%s+', ''):gsub('%s+$', '')
+  elseif opts.first_line then
+    text = text:match('^[^\r\n]*') or ''
+  end
+
+  return truncate_display(text, opts.max_width)
+end
+
+local function format_text(msg)
+  local text = '[autofill] ' .. tostring(msg or '')
+
+  -- Keep echoes inside the command line width to avoid "Press ENTER" prompts.
+  return M.preview_text(text, {
+    first_line = true,
+    max_width = cmdline_width(),
+  })
 end
 
 function M.log(level, msg)

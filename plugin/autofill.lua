@@ -14,6 +14,7 @@ vim.api.nvim_create_user_command('Autofill', function(cmd)
   elseif arg == 'test' then
     local backend = require('autofill.backend')
     local config = require('autofill.config').get()
+    local util = require('autofill.util')
     local runtime_report = backend.inspect_runtime(config)
     if #runtime_report.errors > 0 then
       vim.notify('[autofill] Test failed:\n- ' .. table.concat(runtime_report.errors, '\n- '), vim.log.levels.ERROR)
@@ -54,7 +55,16 @@ vim.api.nvim_create_user_command('Autofill', function(cmd)
 
         profiler.mark(profile, 'final_render')
         local summary = profiler.finish(profile)
-        local msg = '[autofill] Got suggestion (' .. #suggestion .. ' chars):\n' .. suggestion
+        local prefix = '[autofill] Got suggestion (' .. #suggestion .. ' chars)'
+        local preview = util.preview_text(suggestion, {
+          single_line = true,
+        })
+        local msg = prefix
+        if preview ~= '' then
+          msg = util.preview_text(prefix .. ': ' .. preview, {
+            single_line = true,
+          })
+        end
         if summary then
           msg = msg .. '\n\n' .. summary
         end
