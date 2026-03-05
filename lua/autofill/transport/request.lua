@@ -36,7 +36,11 @@ function M.send(opts, callback)
     on_error = function(err)
       if is_stale() then return end
       active_obj = nil
-      util.log('warn', 'Completion failed: ' .. tostring(err))
+      if opts.on_error then
+        opts.on_error(tostring(err))
+      else
+        util.log('warn', 'Completion failed: ' .. tostring(err))
+      end
     end,
   })
 

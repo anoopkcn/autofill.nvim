@@ -9,12 +9,18 @@ function M.complete(ctx, opts)
   if type(opts) == 'function' then
     opts = { on_complete = opts }
   end
+  opts = opts or {}
 
   local config = require('autofill.config').get()
   local claude_config = config.claude
 
-  local api_key = util.get_api_key(claude_config.api_key_env)
-  if not api_key then return end
+  local api_key, api_key_err = util.get_api_key(claude_config.api_key_env, { silent = opts.on_error ~= nil })
+  if not api_key then
+    if opts.on_error then
+      opts.on_error(api_key_err)
+    end
+    return
+  end
 
   local user_message = prompt.build_user_message(ctx)
   util.log('debug', 'Claude prompt:\n' .. user_message)
@@ -40,6 +46,7 @@ function M.complete(ctx, opts)
     },
     timeout_ms = claude_config.timeout_ms,
     stream = true,
+    on_error = opts.on_error,
     on_data = function(payload)
       local ok, data = pcall(vim.json.decode, payload)
       if not ok then return end

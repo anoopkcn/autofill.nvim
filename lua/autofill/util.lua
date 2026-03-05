@@ -53,11 +53,15 @@ function M.profile(msg)
   end)
 end
 
-function M.get_api_key(env_var)
+function M.get_api_key(env_var, opts)
+  opts = opts or {}
   local key = os.getenv(env_var)
   if not key or key == '' then
-    M.log('warn', 'API key not found in environment variable: ' .. env_var)
-    return nil
+    local msg = 'API key not found in environment variable: ' .. env_var
+    if not opts.silent then
+      M.log('warn', msg)
+    end
+    return nil, msg
   end
   return key
 end
