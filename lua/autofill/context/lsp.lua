@@ -3,6 +3,8 @@ local M = {}
 -- Symbol cache keyed by bufnr
 local symbol_cache = {}
 local diagnostic_cache = {}
+local symbol_revision = {}
+local diagnostic_revision = {}
 
 local symbol_kind_names = {
   [1] = 'File', [2] = 'Module', [3] = 'Namespace', [4] = 'Package',
@@ -37,6 +39,7 @@ function M.refresh_symbols(bufnr)
   local clients = vim.lsp.get_clients({ bufnr = bufnr, method = 'textDocument/documentSymbol' })
   if #clients == 0 then
     symbol_cache[bufnr] = nil
+    symbol_revision[bufnr] = (symbol_revision[bufnr] or 0) + 1
     return
   end
 
@@ -44,6 +47,7 @@ function M.refresh_symbols(bufnr)
   vim.lsp.buf_request(bufnr, 'textDocument/documentSymbol', params, function(err, result)
     if err or not result then return end
     symbol_cache[bufnr] = flatten_symbols(result)
+    symbol_revision[bufnr] = (symbol_revision[bufnr] or 0) + 1
   end)
 end
 
@@ -67,6 +71,7 @@ function M.refresh_diagnostics(bufnr)
   end
 
   diagnostic_cache[bufnr] = normalized
+  diagnostic_revision[bufnr] = (diagnostic_revision[bufnr] or 0) + 1
 end
 
 function M.get_context(bufnr, cursor)
@@ -119,6 +124,17 @@ end
 function M.clear(bufnr)
   symbol_cache[bufnr] = nil
   diagnostic_cache[bufnr] = nil
+  symbol_revision[bufnr] = (symbol_revision[bufnr] or 0) + 1
+  diagnostic_revision[bufnr] = (diagnostic_revision[bufnr] or 0) + 1
+end
+
+function M.get_revision(bufnr)
+  return table.concat({
+    'sym=',
+    tostring(symbol_revision[bufnr] or 0),
+    ':diag=',
+    tostring(diagnostic_revision[bufnr] or 0),
+  })
 end
 
 return M

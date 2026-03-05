@@ -179,6 +179,16 @@ function M.get_context(bufnr)
   return neighbors
 end
 
+function M.get_revision(bufnr)
+  local _, import_signature = get_import_names(bufnr)
+  return table.concat({
+    'imports=',
+    import_signature or '',
+    ':candidates=',
+    tostring(candidate_generation),
+  })
+end
+
 function M.mark_candidates_dirty()
   candidate_generation = candidate_generation + 1
 end

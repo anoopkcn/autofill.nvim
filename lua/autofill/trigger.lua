@@ -1,6 +1,8 @@
 local ghost = require('autofill.display.ghost')
 local context = require('autofill.context')
 local buffer_context = require('autofill.context.buffer')
+local lsp_context = require('autofill.context.lsp')
+local neighbors_context = require('autofill.context.neighbors')
 local backend = require('autofill.backend')
 local request = require('autofill.transport.request')
 local cache = require('autofill.cache')
@@ -79,7 +81,19 @@ local function do_complete(snapshot)
   local cursor = snapshot.cursor
   local filetype = vim.bo[bufnr].filetype
   local buf_ctx = buffer_context.get_text(bufnr, cursor)
-  local quick_key = cache.quick_key(filetype, buf_ctx.before, buf_ctx.after)
+  local cache_scope = cache.scope(config)
+  local quick_key = cache.quick_key({
+    scope = cache_scope,
+    bufnr = bufnr,
+    row = cursor[1],
+    filetype = filetype,
+    context_revision = table.concat({
+      lsp_context.get_revision(bufnr),
+      neighbors_context.get_revision(bufnr),
+    }, ':'),
+    before_cursor = buf_ctx.before,
+    after_cursor = buf_ctx.after,
+  })
 
   local quick_cached = cache.get_quick(quick_key)
   if quick_cached then
@@ -91,10 +105,10 @@ local function do_complete(snapshot)
   local ctx = context.gather(bufnr, cursor, { buffer = buf_ctx })
   profiler.mark(snapshot.profile, 'context_ready')
 
-  local cache_key = cache.key(ctx)
+  local cache_key = cache.key(ctx, cache_scope)
   local cached = cache.get(cache_key)
   if cached then
-    cache.set_quick(quick_key, cached)
+    cache.set_quick(quick_key, cached, { bufnr = bufnr })
     show_suggestion(snapshot, cached, false)
     return
   end
@@ -110,7 +124,7 @@ local function do_complete(snapshot)
       end
       if not snapshot_is_current(snapshot) then return end
       cache.set(cache_key, suggestion)
-      cache.set_quick(quick_key, suggestion)
+      cache.set_quick(quick_key, suggestion, { bufnr = bufnr })
       show_suggestion(snapshot, suggestion, false)
     end,
   }
@@ -205,20 +219,19 @@ local function on_insert_leave()
 end
 
 local function on_buf_leave()
+  local bufnr = vim.api.nvim_get_current_buf()
   if timer then
     timer:stop()
   end
   pending_snapshot = nil
   active_request_seq = 0
+  cache.clear_quick_for_buffer(bufnr)
   request.cancel()
   ghost.clear()
 end
 
 function M.start()
   if augroup then return end
-
-  local lsp_mod = require('autofill.context.lsp')
-  local neighbors_mod = require('autofill.context.neighbors')
 
   augroup = vim.api.nvim_create_augroup('autofill_trigger', { clear = true })
 
@@ -241,29 +254,30 @@ function M.start()
   vim.api.nvim_create_autocmd({ 'BufEnter', 'TextChanged', 'LspAttach' }, {
     group = augroup,
     callback = function(ev)
-      lsp_mod.refresh_symbols(ev.buf)
+      lsp_context.refresh_symbols(ev.buf)
     end,
   })
 
   vim.api.nvim_create_autocmd({ 'BufEnter', 'DiagnosticChanged' }, {
     group = augroup,
     callback = function(ev)
-      lsp_mod.refresh_diagnostics(ev.buf)
+      lsp_context.refresh_diagnostics(ev.buf)
     end,
   })
 
   vim.api.nvim_create_autocmd({ 'BufAdd', 'BufDelete', 'BufEnter', 'BufFilePost', 'BufWipeout', 'FileType' }, {
     group = augroup,
     callback = function()
-      neighbors_mod.mark_candidates_dirty()
+      neighbors_context.mark_candidates_dirty()
     end,
   })
 
   vim.api.nvim_create_autocmd({ 'BufDelete', 'BufWipeout' }, {
     group = augroup,
     callback = function(ev)
-      lsp_mod.clear(ev.buf)
-      neighbors_mod.clear(ev.buf)
+      lsp_context.clear(ev.buf)
+      neighbors_context.clear(ev.buf)
+      cache.clear_quick_for_buffer(ev.buf)
     end,
   })
 
@@ -280,8 +294,12 @@ function M.stop()
     timer:close()
     timer = nil
   end
+  local bufnr = vim.api.nvim_get_current_buf()
   pending_snapshot = nil
   active_request_seq = 0
+  if bufnr and vim.api.nvim_buf_is_valid(bufnr) then
+    cache.clear_quick_for_buffer(bufnr)
+  end
   request.cancel()
   ghost.clear()
   util.log('debug', 'Trigger system stopped')

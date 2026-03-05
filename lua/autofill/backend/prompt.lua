@@ -10,6 +10,10 @@ local function trim_text(text, max_chars)
 end
 
 function M.build_user_message(ctx)
+  if ctx._user_message then
+    return ctx._user_message
+  end
+
   local parts = {}
 
   table.insert(parts, 'File: ' .. (ctx.filename ~= '' and vim.fn.fnamemodify(ctx.filename, ':t') or 'unnamed'))
@@ -72,7 +76,8 @@ function M.build_user_message(ctx)
   table.insert(parts, '')
   table.insert(parts, ctx.before_cursor .. '<CURSOR>' .. ctx.after_cursor)
 
-  return table.concat(parts, '\n')
+  ctx._user_message = table.concat(parts, '\n')
+  return ctx._user_message
 end
 
 return M

@@ -1,3 +1,5 @@
+local prompt = require('autofill.backend.prompt')
+
 local M = {}
 
 local full_cache = {}
@@ -16,29 +18,34 @@ local function hash(str)
   return tostring(h)
 end
 
-local function get_entry(store, key)
+local function remove_from_order(order, key)
+  for i = #order, 1, -1 do
+    if order[i] == key then
+      table.remove(order, i)
+      return
+    end
+  end
+end
+
+local function get_entry(store, order, key)
   local entry = store[key]
   if not entry then return nil end
 
   local now = vim.uv.now()
   if now - entry.time > ttl_ms then
     store[key] = nil
+    remove_from_order(order, key)
     return nil
   end
 
   return entry.value
 end
 
-local function set_entry(store, order, key, value)
+local function set_entry(store, order, key, value, meta)
   local now = vim.uv.now()
-  store[key] = { value = value, time = now }
+  store[key] = { value = value, time = now, meta = meta }
 
-  for i = #order, 1, -1 do
-    if order[i] == key then
-      table.remove(order, i)
-      break
-    end
-  end
+  remove_from_order(order, key)
   table.insert(order, key)
 
   while #order > max_entries do
@@ -49,80 +56,86 @@ local function set_entry(store, order, key, value)
   end
 end
 
-local function build_quick_key(filetype, before_cursor, after_cursor)
+local function build_quick_key(opts)
   local parts = {
-    filetype or '',
+    opts.scope or '',
     ':',
-    (before_cursor or ''):sub(-200),
+    tostring(opts.bufnr or ''),
     ':',
-    (after_cursor or ''):sub(1, 100),
+    tostring(opts.row or ''),
+    ':',
+    opts.filetype or '',
+    ':',
+    opts.context_revision or '',
+    ':',
+    (opts.before_cursor or ''):sub(-200),
+    ':',
+    (opts.after_cursor or ''):sub(1, 100),
   }
 
   return hash(table.concat(parts))
 end
 
-function M.key(ctx)
+function M.scope(config)
+  local backend_name = config.backend or ''
+  local backend_opts = config[backend_name] or {}
+  local neighbors = config.neighbors or {}
+
   local parts = {
-    ctx.filetype or '',
+    backend_name,
     ':',
-    (ctx.before_cursor or ''):sub(-200),
+    backend_opts.model or '',
     ':',
-    (ctx.after_cursor or ''):sub(1, 100),
+    tostring(config.max_tokens or ''),
+    ':',
+    tostring(config.context_window or ''),
+    ':',
+    tostring(config.context_ratio or ''),
+    ':',
+    tostring(neighbors.enabled),
+    ':',
+    tostring(neighbors.budget or ''),
+    ':',
+    tostring(neighbors.max_files or ''),
   }
-
-  -- Include treesitter scope chain signature
-  if ctx.treesitter and ctx.treesitter.scopes then
-    for _, scope in ipairs(ctx.treesitter.scopes) do
-      parts[#parts + 1] = ':ts:'
-      parts[#parts + 1] = scope.type
-      parts[#parts + 1] = ':'
-      parts[#parts + 1] = tostring(scope.line)
-    end
-  end
-
-  -- Include diagnostic signature
-  if ctx.lsp and ctx.lsp.diagnostics then
-    parts[#parts + 1] = ':diag:'
-    parts[#parts + 1] = tostring(#ctx.lsp.diagnostics)
-    if ctx.lsp.diagnostics[1] then
-      parts[#parts + 1] = ':'
-      parts[#parts + 1] = ctx.lsp.diagnostics[1].message:sub(1, 50)
-    end
-  end
-
-  -- Include neighbor filenames
-  if ctx.neighbors then
-    for _, nb in ipairs(ctx.neighbors) do
-      parts[#parts + 1] = ':nb:'
-      parts[#parts + 1] = nb.filename or ''
-    end
-  end
 
   return hash(table.concat(parts))
 end
 
-function M.quick_key(filetype, before_cursor, after_cursor)
-  return build_quick_key(filetype, before_cursor, after_cursor)
+function M.key(ctx, scope)
+  local message = prompt.build_user_message(ctx)
+  return hash((scope or '') .. ':' .. prompt.SYSTEM_PROMPT .. '\0' .. message)
 end
 
-function M.quick_key_from_context(ctx)
-  return build_quick_key(ctx.filetype, ctx.before_cursor, ctx.after_cursor)
+function M.quick_key(opts)
+  return build_quick_key(opts)
 end
 
 function M.get(key)
-  return get_entry(full_cache, key)
+  return get_entry(full_cache, full_order, key)
 end
 
 function M.get_quick(key)
-  return get_entry(quick_cache, key)
+  return get_entry(quick_cache, quick_order, key)
 end
 
 function M.set(key, value)
   set_entry(full_cache, full_order, key, value)
 end
 
-function M.set_quick(key, value)
-  set_entry(quick_cache, quick_order, key, value)
+function M.set_quick(key, value, meta)
+  set_entry(quick_cache, quick_order, key, value, meta)
+end
+
+function M.clear_quick_for_buffer(bufnr)
+  for i = #quick_order, 1, -1 do
+    local key = quick_order[i]
+    local entry = quick_cache[key]
+    if entry and entry.meta and entry.meta.bufnr == bufnr then
+      quick_cache[key] = nil
+      table.remove(quick_order, i)
+    end
+  end
 end
 
 function M.clear()
