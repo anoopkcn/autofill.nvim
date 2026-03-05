@@ -4,6 +4,37 @@ local prompt = require('autofill.backend.prompt')
 
 local M = {}
 
+local function trim_result(text)
+  return (text or ''):gsub('^%s*\n', '')
+end
+
+local function append_result(state, chunk, on_partial)
+  if not chunk or chunk == '' then return end
+
+  state.text = state.text .. chunk
+  if on_partial then
+    local partial = trim_result(state.text)
+    if partial ~= '' then
+      on_partial(partial)
+    end
+  end
+end
+
+local function extract_response_text(body)
+  local ok, resp = pcall(vim.json.decode, body)
+  if not ok or not resp.content then
+    return ''
+  end
+
+  local text = ''
+  for _, block in ipairs(resp.content) do
+    if block and block.text then
+      text = text .. block.text
+    end
+  end
+  return text
+end
+
 function M.complete(ctx, opts)
   -- Backward compatible: if opts is a function, wrap it
   if type(opts) == 'function' then
@@ -25,7 +56,8 @@ function M.complete(ctx, opts)
   local user_message = prompt.build_user_message(ctx)
   util.log('debug', 'Claude prompt:\n' .. user_message)
 
-  local collected = {}
+  local use_stream = config.streaming_display
+  local state = { text = '' }
   local on_partial = opts.on_partial
 
   request.send({
@@ -38,40 +70,29 @@ function M.complete(ctx, opts)
     body = {
       model = claude_config.model,
       max_tokens = config.max_tokens,
-      stream = true,
+      stream = use_stream,
       system = prompt.SYSTEM_PROMPT,
       messages = {
         { role = 'user', content = user_message },
       },
     },
     timeout_ms = claude_config.timeout_ms,
-    stream = true,
+    stream = use_stream,
     on_error = opts.on_error,
     on_data = function(payload)
       local ok, data = pcall(vim.json.decode, payload)
       if not ok then return end
       if data.type == 'content_block_delta' and data.delta and data.delta.text then
-        table.insert(collected, data.delta.text)
-        if on_partial then
-          local text_so_far = table.concat(collected):gsub('^%s*\n', '')
-          if text_so_far ~= '' then
-            on_partial(text_so_far)
-          end
-        end
+        append_result(state, data.delta.text, on_partial)
       end
     end,
   }, function(response)
-    -- Streaming done; if we collected via on_data, use that.
-    -- If not (non-streaming fallback), parse stdout.
     local body = response and response.body or ''
-    if #collected == 0 and body ~= '' then
-      local ok, resp = pcall(vim.json.decode, body)
-      if ok and resp.content and resp.content[1] then
-        table.insert(collected, resp.content[1].text or '')
-      end
+    if not use_stream and body ~= '' then
+      state.text = state.text .. extract_response_text(body)
     end
 
-    local result = table.concat(collected):gsub('^%s*\n', '')
+    local result = trim_result(state.text)
 
     if result ~= '' then
       util.log('debug', 'Claude response: ' .. result)

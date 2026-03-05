@@ -4,6 +4,39 @@ local prompt = require('autofill.backend.prompt')
 
 local M = {}
 
+local function trim_result(text)
+  return (text or ''):gsub('^%s*\n', '')
+end
+
+local function append_result(state, chunk, on_partial)
+  if not chunk or chunk == '' then return end
+
+  state.text = state.text .. chunk
+  if on_partial then
+    local partial = trim_result(state.text)
+    if partial ~= '' then
+      on_partial(partial)
+    end
+  end
+end
+
+local function append_response_parts(state, payload, on_partial)
+  if not payload
+    or not payload.candidates
+    or not payload.candidates[1]
+    or not payload.candidates[1].content
+    or not payload.candidates[1].content.parts
+  then
+    return
+  end
+
+  for _, part in ipairs(payload.candidates[1].content.parts) do
+    if part.text then
+      append_result(state, part.text, on_partial)
+    end
+  end
+end
+
 function M.complete(ctx, opts)
   -- Backward compatible: if opts is a function, wrap it
   if type(opts) == 'function' then
@@ -25,11 +58,12 @@ function M.complete(ctx, opts)
   local user_message = prompt.build_user_message(ctx)
   util.log('debug', 'Gemini prompt:\n' .. user_message)
 
+  local use_stream = config.streaming_display
   local url = 'https://generativelanguage.googleapis.com/v1beta/models/'
     .. gemini_config.model
-    .. ':streamGenerateContent?alt=sse'
+    .. (use_stream and ':streamGenerateContent?alt=sse' or ':generateContent')
 
-  local collected = {}
+  local state = { text = '' }
   local on_partial = opts.on_partial
 
   request.send({
@@ -53,49 +87,23 @@ function M.complete(ctx, opts)
       },
     },
     timeout_ms = gemini_config.timeout_ms,
-    stream = true,
+    stream = use_stream,
     on_error = opts.on_error,
     on_data = function(payload)
       local ok, data = pcall(vim.json.decode, payload)
       if not ok then return end
-      if data.candidates
-        and data.candidates[1]
-        and data.candidates[1].content
-        and data.candidates[1].content.parts
-      then
-        for _, part in ipairs(data.candidates[1].content.parts) do
-          if part.text then
-            table.insert(collected, part.text)
-            if on_partial then
-              local text_so_far = table.concat(collected):gsub('^%s*\n', '')
-              if text_so_far ~= '' then
-                on_partial(text_so_far)
-              end
-            end
-          end
-        end
-      end
+      append_response_parts(state, data, on_partial)
     end,
   }, function(response)
-    -- Fallback: if streaming didn't collect anything, parse full response
     local body = response and response.body or ''
-    if #collected == 0 and body ~= '' then
+    if not use_stream and body ~= '' then
       local ok, resp = pcall(vim.json.decode, body)
-      if ok
-        and resp.candidates
-        and resp.candidates[1]
-        and resp.candidates[1].content
-        and resp.candidates[1].content.parts
-      then
-        for _, part in ipairs(resp.candidates[1].content.parts) do
-          if part.text then
-            table.insert(collected, part.text)
-          end
-        end
+      if ok then
+        append_response_parts(state, resp)
       end
     end
 
-    local result = table.concat(collected):gsub('^%s*\n', '')
+    local result = trim_result(state.text)
 
     if result ~= '' then
       util.log('debug', 'Gemini response: ' .. result)

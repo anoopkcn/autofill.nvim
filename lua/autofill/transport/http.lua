@@ -72,6 +72,85 @@ function M._parse_error(raw)
   return first_line:sub(1, 200)
 end
 
+local function normalize_sse_buffer(raw)
+  if not raw or raw == '' then
+    return ''
+  end
+
+  raw = raw:gsub('\r\n', '\n')
+  return raw:gsub('\r', '\n')
+end
+
+local function parse_sse_event(block)
+  local event = {
+    data_lines = {},
+  }
+
+  for _, line in ipairs(vim.split(block, '\n', { plain = true })) do
+    if line ~= '' and line:sub(1, 1) ~= ':' then
+      local field, value = line:match('^([^:]+):?(.*)$')
+      if field and field ~= '' then
+        if value:sub(1, 1) == ' ' then
+          value = value:sub(2)
+        end
+
+        if field == 'data' then
+          event.data_lines[#event.data_lines + 1] = value
+        elseif field == 'event' then
+          event.event = value
+        elseif field == 'id' then
+          event.id = value
+        elseif field == 'retry' then
+          event.retry = tonumber(value) or value
+        end
+      end
+    end
+  end
+
+  if #event.data_lines == 0 and not event.event and not event.id and not event.retry then
+    return nil
+  end
+
+  event.data = table.concat(event.data_lines, '\n')
+  event.data_lines = nil
+  return event
+end
+
+local function flush_sse_events(buffer, opts)
+  opts = opts or {}
+  buffer = normalize_sse_buffer(buffer)
+
+  local event_count = 0
+  while true do
+    local sep_start, sep_end = buffer:find('\n\n', 1, true)
+    if not sep_start then break end
+
+    local block = buffer:sub(1, sep_start - 1)
+    buffer = buffer:sub(sep_end + 1)
+
+    local event = parse_sse_event(block)
+    if event then
+      event_count = event_count + 1
+      if opts.on_event then
+        opts.on_event(event)
+      end
+    end
+  end
+
+  if opts.final and buffer ~= '' then
+    local event = parse_sse_event(buffer)
+    buffer = ''
+    if event then
+      event_count = event_count + 1
+      if opts.on_event then
+        opts.on_event(event)
+      end
+    end
+  end
+
+  return buffer, event_count
+end
+
 function M.request(opts)
   local url = opts.url
   local headers = opts.headers or {}
@@ -116,8 +195,16 @@ function M.request(opts)
   local stream_error = nil
 
   local system_opts = {}
+  local function handle_sse_event(event)
+    got_sse = true
+    if on_data and event.data and event.data ~= '' and event.data ~= '[DONE]' then
+      vim.schedule(function()
+        on_data(event.data, event)
+      end)
+    end
+  end
 
-  if stream and on_data then
+  if stream then
     system_opts.stdout = function(err, data)
       if err then
         stream_error = tostring(err)
@@ -126,21 +213,7 @@ function M.request(opts)
       if not data then return end
       table.insert(raw_chunks, data)
       stdout_buf = stdout_buf .. data
-      while true do
-        local nl = stdout_buf:find('\n')
-        if not nl then break end
-        local line = stdout_buf:sub(1, nl - 1)
-        stdout_buf = stdout_buf:sub(nl + 1)
-        if line:match('^data: ') then
-          got_sse = true
-          local payload = line:sub(7)
-          if payload ~= '[DONE]' then
-            vim.schedule(function()
-              on_data(payload)
-            end)
-          end
-        end
-      end
+      stdout_buf = flush_sse_events(stdout_buf, { on_event = handle_sse_event })
     end
   end
 
@@ -149,6 +222,17 @@ function M.request(opts)
       local output = stream and table.concat(raw_chunks) or result.stdout or ''
       local local_status
       output, local_status = split_http_output(output)
+
+      if stream then
+        local flushed_events
+        stdout_buf, flushed_events = flush_sse_events(split_http_output(stdout_buf), {
+          final = true,
+          on_event = handle_sse_event,
+        })
+        if flushed_events > 0 then
+          got_sse = true
+        end
+      end
 
       if stream_error then
         if on_error then

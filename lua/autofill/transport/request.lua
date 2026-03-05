@@ -22,10 +22,10 @@ function M.send(opts, callback)
     body = opts.body,
     timeout_ms = opts.timeout_ms,
     stream = opts.stream,
-    on_data = function(payload)
+    on_data = function(...)
       if is_stale() then return end
       if opts.on_data then
-        opts.on_data(payload)
+        opts.on_data(...)
       end
     end,
     on_done = function(stdout)
