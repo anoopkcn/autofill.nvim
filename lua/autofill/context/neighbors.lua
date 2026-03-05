@@ -7,6 +7,7 @@ local candidate_cache = {}
 local snapshot_cache = {}
 local candidate_generation = 0
 local IMPORT_SCAN_LINES = 80
+local SNAPSHOT_LINE_LIMIT = 40
 
 local SUPPORTED_IMPORT_FILETYPES = {
   go = true,
@@ -19,11 +20,102 @@ local SUPPORTED_IMPORT_FILETYPES = {
   typescriptreact = true,
 }
 
+local FILETYPE_EXTENSIONS = {
+  go = { 'go' },
+  javascript = { 'js', 'mjs', 'cjs', 'jsx' },
+  javascriptreact = { 'jsx', 'js', 'mjs', 'cjs' },
+  lua = { 'lua' },
+  python = { 'py' },
+  rust = { 'rs' },
+  typescript = { 'ts', 'tsx', 'js', 'mjs', 'cjs' },
+  typescriptreact = { 'tsx', 'ts', 'jsx', 'js' },
+}
+
 local function get_changedtick(bufnr)
   if not vim.api.nvim_buf_is_valid(bufnr) then
     return -1
   end
   return vim.api.nvim_buf_get_changedtick(bufnr)
+end
+
+local function normalize_path(path)
+  if not path or path == '' then
+    return ''
+  end
+  return vim.fs.normalize(path)
+end
+
+local function current_dir_for_path(path)
+  if not path or path == '' then
+    return ''
+  end
+  return normalize_path(vim.fn.fnamemodify(path, ':h'))
+end
+
+local function basename_without_extension(path)
+  return vim.fn.fnamemodify(path, ':t:r')
+end
+
+local function allowed_extension_set(current_name, current_ft)
+  local seen = {}
+
+  local current_ext = current_name:match('%.([^./\\]+)$')
+  if current_ext and current_ext ~= '' then
+    seen[current_ext] = true
+  end
+
+  for _, ext in ipairs(FILETYPE_EXTENSIONS[current_ft] or {}) do
+    seen[ext] = true
+  end
+
+  return seen
+end
+
+local function file_signature(path)
+  local stat = vim.uv.fs_stat(path)
+  if not stat or not stat.mtime then
+    return nil
+  end
+
+  return table.concat({
+    tostring(stat.size or 0),
+    ':',
+    tostring(stat.mtime.sec or 0),
+    ':',
+    tostring(stat.mtime.nsec or 0),
+  })
+end
+
+local function directory_signature(dir, extension_set, scan_limit)
+  if not dir or dir == '' then
+    return ''
+  end
+
+  local ok, entries = pcall(vim.fn.readdir, dir)
+  if not ok or type(entries) ~= 'table' then
+    return ''
+  end
+
+  table.sort(entries)
+
+  local parts = {}
+  local added = 0
+  for _, entry in ipairs(entries) do
+    local ext = entry:match('%.([^./\\]+)$')
+    if ext and extension_set[ext] then
+      local path = normalize_path(dir .. '/' .. entry)
+      local signature = file_signature(path)
+      if signature then
+        parts[#parts + 1] = entry .. ':' .. signature
+        added = added + 1
+        if added >= scan_limit then
+          break
+        end
+      end
+    end
+  end
+
+  return table.concat(parts, '|')
 end
 
 local function add_import_name(names, ordered, raw_name, mode)
@@ -233,28 +325,23 @@ local function get_import_names(bufnr)
   return names, signature
 end
 
-local function score_buffer(buf, current_bufnr, current_dir, current_ft, import_names)
-  if buf.bufnr == current_bufnr then return -1 end
-
-  local name = buf.name
-  if not name or name == '' then return -1 end
+local function score_candidate(path, current_dir, same_filetype, import_names)
+  local name = normalize_path(path)
+  if name == '' then
+    return -1
+  end
 
   local score = 0
 
-  -- Same directory bonus
-  local dir = vim.fn.fnamemodify(name, ':h')
-  if dir == current_dir then
+  if current_dir ~= '' and current_dir_for_path(name) == current_dir then
     score = score + 3
   end
 
-  -- Same filetype bonus
-  local ft = vim.bo[buf.bufnr].filetype
-  if ft == current_ft then
+  if same_filetype then
     score = score + 2
   end
 
-  -- Import detection bonus
-  local basename = vim.fn.fnamemodify(name, ':t:r')
+  local basename = basename_without_extension(name)
   if import_names[basename] then
     score = score + 5
   end
@@ -262,71 +349,195 @@ local function score_buffer(buf, current_bufnr, current_dir, current_ft, import_
   return score
 end
 
-local function build_candidates(bufnr, current_dir, current_ft, import_names)
+local function build_loaded_candidates(bufnr, current_name, current_dir, current_ft, import_names)
   local bufs = vim.fn.getbufinfo({ buflisted = 1, bufloaded = 1 })
   local candidates = {}
+  local seen_paths = {}
 
   for _, buf in ipairs(bufs) do
-    local s = score_buffer(buf, bufnr, current_dir, current_ft, import_names)
-    if s >= 0 then
-      table.insert(candidates, { buf = buf, score = s })
+    if buf.bufnr ~= bufnr then
+      local path = normalize_path(buf.name)
+      if path ~= '' and path ~= current_name then
+        local score = score_candidate(path, current_dir, vim.bo[buf.bufnr].filetype == current_ft, import_names)
+        if score >= 0 then
+          candidates[#candidates + 1] = {
+            kind = 'buffer',
+            bufnr = buf.bufnr,
+            path = path,
+            score = score,
+            lastused = buf.lastused or 0,
+          }
+          seen_paths[path] = true
+        end
+      end
+    end
+  end
+
+  return candidates, seen_paths
+end
+
+local function loaded_buffer_signature(current_bufnr)
+  local bufs = vim.fn.getbufinfo({ buflisted = 1, bufloaded = 1 })
+  local parts = {}
+
+  for _, buf in ipairs(bufs) do
+    if buf.bufnr ~= current_bufnr then
+      local path = normalize_path(buf.name)
+      if path ~= '' then
+        parts[#parts + 1] = table.concat({
+          path,
+          ':',
+          vim.bo[buf.bufnr].filetype or '',
+          ':',
+          tostring(buf.lastused or 0),
+          ':',
+          tostring(get_changedtick(buf.bufnr)),
+        })
+      end
+    end
+  end
+
+  table.sort(parts)
+  return table.concat(parts, '|')
+end
+
+local function build_disk_candidates(current_name, current_dir, import_names, extension_set, seen_paths, scan_limit)
+  local candidates = {}
+  if current_dir == '' or vim.tbl_isempty(extension_set) then
+    return candidates
+  end
+
+  local ok, entries = pcall(vim.fn.readdir, current_dir)
+  if not ok or type(entries) ~= 'table' then
+    return candidates
+  end
+
+  local added = 0
+  for _, entry in ipairs(entries) do
+    if added >= scan_limit then
+      break
+    end
+
+    local ext = entry:match('%.([^./\\]+)$')
+    if ext and extension_set[ext] then
+      local path = normalize_path(current_dir .. '/' .. entry)
+      if path ~= '' and path ~= current_name and not seen_paths[path] then
+        local stat = vim.uv.fs_stat(path)
+        if stat and stat.type == 'file' then
+          candidates[#candidates + 1] = {
+            kind = 'file',
+            path = path,
+            score = score_candidate(path, current_dir, true, import_names),
+            lastused = 0,
+          }
+          added = added + 1
+        end
+      end
+    end
+  end
+
+  return candidates
+end
+
+local function build_candidates(bufnr, current_name, current_dir, current_ft, import_names, nb_config)
+  local candidates, seen_paths = build_loaded_candidates(bufnr, current_name, current_dir, current_ft, import_names)
+  local extension_set = allowed_extension_set(current_name, current_ft)
+
+  if nb_config.include_disk_files then
+    local disk_candidates = build_disk_candidates(
+      current_name,
+      current_dir,
+      import_names,
+      extension_set,
+      seen_paths,
+      nb_config.disk_scan_limit or 32
+    )
+    for _, candidate in ipairs(disk_candidates) do
+      candidates[#candidates + 1] = candidate
     end
   end
 
   table.sort(candidates, function(a, b)
-    if a.score ~= b.score then return a.score > b.score end
-    return (a.buf.lastused or 0) > (b.buf.lastused or 0)
+    if a.score ~= b.score then
+      return a.score > b.score
+    end
+    if a.kind ~= b.kind then
+      return a.kind == 'buffer'
+    end
+    if (a.lastused or 0) ~= (b.lastused or 0) then
+      return (a.lastused or 0) > (b.lastused or 0)
+    end
+    return a.path < b.path
   end)
 
   return candidates
 end
 
-local function get_candidates(bufnr, current_dir, current_ft, import_names, import_signature)
+local function get_candidates(bufnr, current_name, current_dir, current_ft, import_names, import_signature, extension_set, nb_config)
+  local dir_sig = directory_signature(current_dir, extension_set, nb_config.disk_scan_limit or 32)
+  local loaded_sig = loaded_buffer_signature(bufnr)
   local cached = candidate_cache[bufnr]
   if cached
     and cached.generation == candidate_generation
     and cached.import_signature == import_signature
+    and cached.current_name == current_name
     and cached.current_dir == current_dir
     and cached.current_ft == current_ft
+    and cached.directory_signature == dir_sig
+    and cached.loaded_signature == loaded_sig
+    and cached.include_disk_files == nb_config.include_disk_files
+    and cached.disk_scan_limit == nb_config.disk_scan_limit
   then
     return cached.candidates
   end
 
-  local candidates = build_candidates(bufnr, current_dir, current_ft, import_names)
+  local candidates = build_candidates(bufnr, current_name, current_dir, current_ft, import_names, nb_config)
   candidate_cache[bufnr] = {
     generation = candidate_generation,
     import_signature = import_signature,
+    current_name = current_name,
     current_dir = current_dir,
     current_ft = current_ft,
+    directory_signature = dir_sig,
+    loaded_signature = loaded_sig,
+    include_disk_files = nb_config.include_disk_files,
+    disk_scan_limit = nb_config.disk_scan_limit,
     candidates = candidates,
   }
 
   return candidates
 end
 
-local function get_snapshot(buf, budget)
-  if not buf or not buf.bufnr or not vim.api.nvim_buf_is_valid(buf.bufnr) then
+local function get_buffer_snapshot(candidate, budget)
+  if not candidate or not candidate.bufnr or not vim.api.nvim_buf_is_valid(candidate.bufnr) then
     return nil
   end
 
-  local changedtick = get_changedtick(buf.bufnr)
-  local cached = snapshot_cache[buf.bufnr]
+  local cache_key = 'buf:' .. tostring(candidate.bufnr)
+  local changedtick = get_changedtick(candidate.bufnr)
+  local cached = snapshot_cache[cache_key]
   if cached and cached.changedtick == changedtick and cached.budget == budget then
     return cached.snapshot
   end
 
-  local lines = vim.api.nvim_buf_get_lines(buf.bufnr, 0, 40, false)
+  local lines = vim.api.nvim_buf_get_lines(candidate.bufnr, 0, SNAPSHOT_LINE_LIMIT, false)
   local content = table.concat(lines, '\n')
+  local is_truncated = false
   if #content > budget then
     content = utf8.safe_sub_left(content, budget)
+    is_truncated = true
+  end
+  if vim.api.nvim_buf_line_count(candidate.bufnr) > SNAPSHOT_LINE_LIMIT then
+    is_truncated = true
   end
 
   local snapshot = {
-    filename = vim.fn.fnamemodify(buf.name, ':t'),
+    filename = vim.fn.fnamemodify(candidate.path, ':t'),
     content = content,
+    is_truncated = is_truncated,
   }
 
-  snapshot_cache[buf.bufnr] = {
+  snapshot_cache[cache_key] = {
     changedtick = changedtick,
     budget = budget,
     snapshot = snapshot,
@@ -335,16 +546,77 @@ local function get_snapshot(buf, budget)
   return snapshot
 end
 
+local function get_file_snapshot(candidate, budget)
+  if not candidate or not candidate.path or candidate.path == '' then
+    return nil
+  end
+
+  local signature = file_signature(candidate.path)
+  if not signature then
+    return nil
+  end
+
+  local cache_key = 'file:' .. candidate.path
+  local cached = snapshot_cache[cache_key]
+  if cached and cached.signature == signature and cached.budget == budget then
+    return cached.snapshot
+  end
+
+  local lines = vim.fn.readfile(candidate.path, '', SNAPSHOT_LINE_LIMIT + 1)
+  if type(lines) ~= 'table' then
+    return nil
+  end
+
+  local is_truncated = #lines > SNAPSHOT_LINE_LIMIT
+  while #lines > SNAPSHOT_LINE_LIMIT do
+    table.remove(lines)
+  end
+
+  local content = table.concat(lines, '\n')
+  if #content > budget then
+    content = utf8.safe_sub_left(content, budget)
+    is_truncated = true
+  end
+
+  local snapshot = {
+    filename = vim.fn.fnamemodify(candidate.path, ':t'),
+    content = content,
+    is_truncated = is_truncated,
+  }
+
+  snapshot_cache[cache_key] = {
+    signature = signature,
+    budget = budget,
+    snapshot = snapshot,
+  }
+
+  return snapshot
+end
+
+local function get_snapshot(candidate, budget)
+  if not candidate then
+    return nil
+  end
+  if candidate.kind == 'buffer' then
+    return get_buffer_snapshot(candidate, budget)
+  end
+  if candidate.kind == 'file' then
+    return get_file_snapshot(candidate, budget)
+  end
+  return nil
+end
+
 function M.get_context(bufnr)
   local config = require('autofill.config').get()
   local nb_config = config.neighbors
   if not nb_config or not nb_config.enabled then return nil end
 
-  local current_name = vim.api.nvim_buf_get_name(bufnr)
-  local current_dir = vim.fn.fnamemodify(current_name, ':h')
+  local current_name = normalize_path(vim.api.nvim_buf_get_name(bufnr))
+  local current_dir = current_dir_for_path(current_name)
   local current_ft = vim.bo[bufnr].filetype
+  local extension_set = allowed_extension_set(current_name, current_ft)
   local import_names, import_signature = get_import_names(bufnr)
-  local candidates = get_candidates(bufnr, current_dir, current_ft, import_names, import_signature)
+  local candidates = get_candidates(bufnr, current_name, current_dir, current_ft, import_names, import_signature, extension_set, nb_config)
 
   local max_files = nb_config.max_files or 2
   if max_files <= 0 then return nil end
@@ -354,7 +626,7 @@ function M.get_context(bufnr)
 
   local neighbors = {}
   for i = 1, math.min(max_files, #candidates) do
-    local snapshot = get_snapshot(candidates[i].buf, per_file_budget)
+    local snapshot = get_snapshot(candidates[i], per_file_budget)
     if snapshot then
       neighbors[#neighbors + 1] = snapshot
     end
@@ -365,12 +637,52 @@ function M.get_context(bufnr)
 end
 
 function M.get_revision(bufnr)
-  local _, import_signature = get_import_names(bufnr)
+  local config = require('autofill.config').get()
+  local nb_config = config.neighbors or {}
+  local current_name = normalize_path(vim.api.nvim_buf_get_name(bufnr))
+  local current_dir = current_dir_for_path(current_name)
+  local current_ft = vim.bo[bufnr].filetype
+  local extension_set = allowed_extension_set(current_name, current_ft)
+  local import_names, import_signature = get_import_names(bufnr)
+  local candidates = get_candidates(
+    bufnr,
+    current_name,
+    current_dir,
+    current_ft,
+    import_names,
+    import_signature,
+    extension_set,
+    nb_config
+  )
+
+  local top_signatures = {}
+  local max_files = nb_config.max_files or 2
+  for i = 1, math.min(max_files, #candidates) do
+    local candidate = candidates[i]
+    if candidate.kind == 'buffer' then
+      top_signatures[#top_signatures + 1] = table.concat({
+        candidate.path,
+        ':buf:',
+        tostring(get_changedtick(candidate.bufnr)),
+      })
+    elseif candidate.kind == 'file' then
+      top_signatures[#top_signatures + 1] = table.concat({
+        candidate.path,
+        ':file:',
+        file_signature(candidate.path) or '',
+      })
+    end
+  end
+
   return table.concat({
     'imports=',
     import_signature or '',
+    ':dir=',
+    directory_signature(current_dir, extension_set, nb_config.disk_scan_limit or 32),
     ':candidates=',
     tostring(candidate_generation),
+    ':top=',
+    table.concat(top_signatures, ','),
   })
 end
 
@@ -381,7 +693,7 @@ end
 function M.clear(bufnr)
   import_cache[bufnr] = nil
   candidate_cache[bufnr] = nil
-  snapshot_cache[bufnr] = nil
+  snapshot_cache['buf:' .. tostring(bufnr)] = nil
 end
 
 return M

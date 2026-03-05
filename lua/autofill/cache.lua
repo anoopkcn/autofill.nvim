@@ -80,6 +80,7 @@ function M.scope(config)
   local backend_name = config.backend or ''
   local backend_opts = config[backend_name] or {}
   local neighbors = config.neighbors or {}
+  local prompt_config = config.prompt or {}
 
   local parts = {
     backend_name,
@@ -97,6 +98,28 @@ function M.scope(config)
     tostring(neighbors.budget or ''),
     ':',
     tostring(neighbors.max_files or ''),
+    ':',
+    tostring(neighbors.include_disk_files),
+    ':',
+    tostring(neighbors.disk_scan_limit or ''),
+    ':',
+    tostring(prompt_config.max_chars or ''),
+    ':',
+    tostring(prompt_config.max_neighbors_chars or ''),
+    ':',
+    tostring(prompt_config.max_neighbor_file_chars or ''),
+    ':',
+    tostring(prompt_config.max_outline_chars or ''),
+    ':',
+    tostring(prompt_config.max_scope_chars or ''),
+    ':',
+    tostring(prompt_config.max_diagnostics_chars or ''),
+    ':',
+    tostring(prompt_config.max_symbol_count or ''),
+    ':',
+    tostring(prompt_config.max_scope_count or ''),
+    ':',
+    tostring(prompt_config.max_diagnostic_count or ''),
   }
 
   return hash(table.concat(parts))

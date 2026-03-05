@@ -28,6 +28,8 @@ function M.gather(bufnr, cursor, opts)
     filename = vim.api.nvim_buf_get_name(bufnr),
     before_cursor = buf_ctx.before,
     after_cursor = buf_ctx.after,
+    is_truncated_before = buf_ctx.is_truncated_before,
+    is_truncated_after = buf_ctx.is_truncated_after,
     treesitter = ts_ctx,
     lsp = lsp_ctx,
     neighbors = nb_ctx,

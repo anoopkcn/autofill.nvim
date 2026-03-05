@@ -51,6 +51,36 @@ return function()
     return calls == 1
   end, 'non-matching typed text should request a new completion')
 
+  calls = 0
+  vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, { '' })
+  vim.api.nvim_win_set_cursor(0, { 1, 0 })
+  ghost.show(bufnr, 1, 0, 'foo\nbar')
+
+  vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, { 'foo' })
+  vim.api.nvim_win_set_cursor(0, { 1, 3 })
+  vim.api.nvim_exec_autocmds('TextChangedI', { buffer = bufnr })
+  vim.wait(100)
+  local state = ghost.get_state(bufnr)
+  assert(calls == 0, 'typing through the first line of a multiline ghost text should not request a new completion')
+  assert(state and state.text == '\nbar', 'typing through a multiline suggestion should preserve the newline remainder')
+  assert(state.line == 1 and state.col == 3, 'multiline ghost text should re-anchor at the updated cursor position on the same line')
+
+  vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, { 'foo', '' })
+  vim.api.nvim_win_set_cursor(0, { 2, 0 })
+  vim.api.nvim_exec_autocmds('TextChangedI', { buffer = bufnr })
+  vim.wait(100)
+  state = ghost.get_state(bufnr)
+  assert(calls == 0, 'typing through the newline of a multiline ghost text should not request a new completion')
+  assert(state and state.text == 'bar', 'typing through the newline should move the remainder to the next line')
+  assert(state.line == 2 and state.col == 0, 'multiline ghost text should re-anchor at the next line after typing a newline')
+
+  vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, { 'foo', 'bar' })
+  vim.api.nvim_win_set_cursor(0, { 2, 3 })
+  vim.api.nvim_exec_autocmds('TextChangedI', { buffer = bufnr })
+  vim.wait(100)
+  assert(calls == 0, 'typing through the final line of a multiline ghost text should not request a new completion')
+  assert(not ghost.is_visible(bufnr), 'typing through the entire multiline ghost text should dismiss it')
+
   local requests = {}
   backend.complete = function(_, opts)
     requests[#requests + 1] = opts

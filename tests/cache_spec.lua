@@ -56,5 +56,42 @@ return function()
   assert(cache.get_quick(quick1) == nil, 'buffer-scoped quick cache clear should drop entries for that buffer')
   assert(cache.get_quick(quick2) == 'two', 'buffer-scoped quick cache clear should not drop other buffers')
 
+  config.setup({
+    enabled = false,
+    prompt = {
+      max_chars = 13000,
+      max_neighbors_chars = 2500,
+      max_neighbor_file_chars = 900,
+      max_outline_chars = 1200,
+      max_scope_chars = 900,
+      max_diagnostics_chars = 600,
+      max_symbol_count = 15,
+      max_scope_count = 8,
+      max_diagnostic_count = 5,
+    },
+    neighbors = {
+      enabled = true,
+      budget = 2000,
+      max_files = 2,
+      include_disk_files = false,
+      disk_scan_limit = 32,
+    },
+  })
+  local prompt_scope = cache.scope(config.get())
+  assert(scope ~= prompt_scope, 'cache scope should change when prompt-shaping settings change')
+
+  config.setup({
+    enabled = false,
+    neighbors = {
+      enabled = true,
+      budget = 2000,
+      max_files = 2,
+      include_disk_files = false,
+      disk_scan_limit = 32,
+    },
+  })
+  local disk_scope = cache.scope(config.get())
+  assert(scope ~= disk_scope, 'cache scope should change when neighbor disk-source settings change')
+
   cache.clear()
 end

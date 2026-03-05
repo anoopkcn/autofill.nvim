@@ -1,4 +1,5 @@
 local util = require('autofill.util')
+local sanitize = require('autofill.sanitize')
 
 local M = {}
 
@@ -84,7 +85,29 @@ function M.complete(ctx, opts)
     return
   end
 
-  backend.complete(ctx, opts)
+  local wrapped_opts = vim.tbl_extend('force', {}, opts)
+
+  if opts.on_partial then
+    wrapped_opts.on_partial = function(text)
+      local suggestion = sanitize.suggestion(ctx, text)
+      if suggestion ~= '' then
+        opts.on_partial(suggestion)
+      end
+    end
+  end
+
+  if opts.on_complete then
+    wrapped_opts.on_complete = function(text)
+      local suggestion = sanitize.suggestion(ctx, text)
+      if suggestion ~= '' then
+        opts.on_complete(suggestion)
+      else
+        opts.on_complete(nil)
+      end
+    end
+  end
+
+  backend.complete(ctx, wrapped_opts)
 end
 
 return M

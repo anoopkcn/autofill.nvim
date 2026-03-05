@@ -114,6 +114,22 @@ local function render_state(state)
   )
 end
 
+local function position_at_or_before(row_a, col_a, row_b, col_b)
+  return row_a < row_b or (row_a == row_b and col_a <= col_b)
+end
+
+local function text_between(bufnr, start_row, start_col, end_row, end_col)
+  local lines = vim.api.nvim_buf_get_text(
+    bufnr,
+    start_row - 1,
+    start_col,
+    end_row - 1,
+    end_col,
+    {}
+  )
+  return table.concat(lines, '\n')
+end
+
 local function delete_insert_mapping(lhs)
   if lhs then
     pcall(vim.keymap.del, 'i', lhs)
@@ -360,18 +376,9 @@ function M.advance(bufnr)
 
   local cursor = vim.api.nvim_win_get_cursor(0)
   local row, col = cursor[1], cursor[2]
-  local current_line = vim.api.nvim_buf_get_lines(bufnr, row - 1, row, false)[1] or ''
+  if position_at_or_before(row, col, state.line, state.col) then return false end
 
-  -- The text typed since the suggestion was shown
-  if row ~= state.line then
-    M.clear()
-    return false
-  end
-
-  if col <= state.col then return false end
-
-  -- Get the typed characters since the suggestion was placed
-  local typed = current_line:sub(state.col + 1, col)
+  local typed = text_between(bufnr, state.line, state.col, row, col)
   local suggestion_prefix = state.text:sub(1, #typed)
 
   if typed == suggestion_prefix then
@@ -382,6 +389,7 @@ function M.advance(bufnr)
       return true
     end
     -- Update state in-place and re-render
+    state.line = row
     state.col = col
     state.text = remainder
     -- Clear old extmark and render new one

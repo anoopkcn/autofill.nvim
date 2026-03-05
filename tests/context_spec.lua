@@ -94,6 +94,61 @@ return function()
   assert(message:find('Nearby diagnostics:\n  Line 7 %[WARN%]: unused local value'), 'prompt should include nearby diagnostics')
   assert(message:find('local example = <CURSOR>', 1, true), 'prompt should include the cursor marker')
 
+  config.setup({
+    context_window = 200,
+    context_ratio = 0.5,
+    prompt = {
+      max_chars = 700,
+      max_neighbors_chars = 90,
+      max_neighbor_file_chars = 18,
+      max_outline_chars = 80,
+      max_scope_chars = 80,
+      max_diagnostics_chars = 70,
+      max_symbol_count = 1,
+      max_scope_count = 1,
+      max_diagnostic_count = 1,
+    },
+  })
+
+  local tight_message = prompt.build_user_message({
+    filename = '/tmp/tight.lua',
+    filetype = 'lua',
+    before_cursor = string.rep('b', 40),
+    after_cursor = string.rep('a', 40),
+    is_truncated_before = true,
+    is_truncated_after = true,
+    neighbors = {
+      { filename = 'neighbor.lua', content = string.rep('n', 40), is_truncated = true },
+      { filename = 'ignored.lua', content = 'return 2' },
+    },
+    treesitter = {
+      scopes = {
+        { type = 'function_declaration', line = 3, header = string.rep('scope', 10) },
+        { type = 'if_statement', line = 4, header = 'ignored scope' },
+      },
+      in_comment = true,
+      in_string = true,
+    },
+    lsp = {
+      symbols = {
+        { kind = 'Function', name = 'Alpha', line = 3, container = '' },
+        { kind = 'Function', name = 'Beta', line = 4, container = '' },
+      },
+      diagnostics = {
+        { line = 7, severity = vim.diagnostic.severity.WARN, message = string.rep('warn ', 20) },
+        { line = 8, severity = vim.diagnostic.severity.ERROR, message = 'ignored diagnostic' },
+      },
+    },
+  })
+  assert(#tight_message <= 700, 'prompt should honor the configured overall character budget')
+  assert(tight_message:find('Context notes:\nContext before the cursor was truncated.\nContext after the cursor was truncated.', 1, true), 'prompt should signal truncated surrounding buffer context')
+  assert(tight_message:find('Related files %(truncated%):'), 'prompt should signal truncated related-file context')
+  assert(tight_message:find('%-%-%- neighbor%.lua %(truncated%) %-%-%-'), 'prompt should signal per-file neighbor truncation')
+  assert(not tight_message:find('ignored.lua', 1, true), 'prompt should drop extra optional context when section budgets are exhausted')
+  assert(tight_message:find('File outline %(truncated%):'), 'prompt should signal truncated outline sections')
+  assert(tight_message:find('Scope chain %(truncated%):'), 'prompt should signal truncated scope sections')
+  assert(tight_message:find('Nearby diagnostics %(truncated%):'), 'prompt should signal truncated diagnostics sections')
+
   treesitter_context.get_context = original_ts_get_context
   lsp_context.get_context = original_lsp_get_context
   lsp_context.get_symbols = original_lsp_get_symbols
@@ -198,30 +253,33 @@ return function()
       enabled = true,
       budget = 120,
       max_files = 2,
+      include_disk_files = true,
+      disk_scan_limit = 16,
     },
   })
+
+  local neighbor_dir = vim.fn.tempname()
+  vim.fn.mkdir(neighbor_dir, 'p')
+  vim.fn.writefile({
+    'export default function foo() {',
+    '  return 1',
+    '}',
+  }, neighbor_dir .. '/foo.js')
 
   local current_bufnr = helpers.new_buffer({
     "import foo from './foo'",
     'const value = foo()',
   }, {
-    name = '/tmp/autofill-context-neighbors/main.js',
+    name = neighbor_dir .. '/main.js',
     filetype = 'javascript',
     row = 2,
     col = 5,
   })
-  helpers.new_buffer({
-    'export default function foo() {',
-    '  return 1',
-    '}',
-  }, {
-    name = '/tmp/autofill-context-neighbors/foo.js',
-    filetype = 'javascript',
-  })
+  local revision_before = neighbors_context.get_revision(current_bufnr)
   helpers.new_buffer({
     'export const util = () => 2',
   }, {
-    name = '/tmp/autofill-context-neighbors/util.js',
+    name = neighbor_dir .. '/util.js',
     filetype = 'javascript',
   })
   helpers.new_buffer({
@@ -236,6 +294,12 @@ return function()
   assert(neighbor_snapshots and #neighbor_snapshots == 2, 'neighbors context should include the top configured number of files')
   assert(neighbor_snapshots[1].filename == 'foo.js', 'neighbors context should prioritize imported files in the same directory')
   assert(neighbor_snapshots[2].filename == 'util.js', 'neighbors context should rank same-directory same-filetype files ahead of unrelated buffers')
+  assert(neighbor_snapshots[1].content:find('export default function foo', 1, true), 'neighbors context should load unopened same-directory files from disk')
+
+  vim.wait(20)
+  vim.fn.writefile({ 'export const later = () => 4' }, neighbor_dir .. '/later.js')
+  local revision_after = neighbors_context.get_revision(current_bufnr)
+  assert(revision_before ~= revision_after, 'neighbors revision should change when same-directory disk candidates change')
 
   local original_get_parser = vim.treesitter.get_parser
   local original_get_captures_at_pos = vim.treesitter.get_captures_at_pos

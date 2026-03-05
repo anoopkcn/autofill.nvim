@@ -19,7 +19,7 @@ AI-assisted ghost-text autocompletion for Neovim.
 - Neovim `0.10+`
 - `curl`
 - An API key for the backend you configure
-- Treesitter and LSP are optional, but improve context quality
+- Treesitter and LSP are optional, but improve context quality(optional)
 
 ## Supported Backends
 

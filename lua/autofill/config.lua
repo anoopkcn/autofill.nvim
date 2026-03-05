@@ -44,6 +44,19 @@ M.defaults = {
     enabled = true,
     budget = 2000,
     max_files = 2,
+    include_disk_files = true,
+    disk_scan_limit = 32,
+  },
+  prompt = {
+    max_chars = 12000,
+    max_neighbors_chars = 2500,
+    max_neighbor_file_chars = 900,
+    max_outline_chars = 1200,
+    max_scope_chars = 900,
+    max_diagnostics_chars = 600,
+    max_symbol_count = 15,
+    max_scope_count = 8,
+    max_diagnostic_count = 5,
   },
   filetypes_exclude = {},
   keymaps = {
@@ -176,6 +189,47 @@ function M.inspect(options)
     end
     if not is_positive_integer(options.neighbors.max_files) then
       errors[#errors + 1] = 'neighbors.max_files must be a positive integer'
+    end
+    if type(options.neighbors.include_disk_files) ~= 'boolean' then
+      errors[#errors + 1] = 'neighbors.include_disk_files must be a boolean'
+    end
+    if not is_positive_integer(options.neighbors.disk_scan_limit) then
+      errors[#errors + 1] = 'neighbors.disk_scan_limit must be a positive integer'
+    end
+  end
+
+  if type(options.prompt) ~= 'table' then
+    errors[#errors + 1] = 'prompt must be a table'
+  else
+    if not is_positive_integer(options.prompt.max_chars) then
+      errors[#errors + 1] = 'prompt.max_chars must be a positive integer'
+    elseif options.prompt.max_chars <= options.context_window + 128 then
+      errors[#errors + 1] = 'prompt.max_chars must leave room beyond context_window for prompt metadata'
+    end
+
+    if not is_non_negative_integer(options.prompt.max_neighbors_chars) then
+      errors[#errors + 1] = 'prompt.max_neighbors_chars must be a non-negative integer'
+    end
+    if not is_non_negative_integer(options.prompt.max_neighbor_file_chars) then
+      errors[#errors + 1] = 'prompt.max_neighbor_file_chars must be a non-negative integer'
+    end
+    if not is_non_negative_integer(options.prompt.max_outline_chars) then
+      errors[#errors + 1] = 'prompt.max_outline_chars must be a non-negative integer'
+    end
+    if not is_non_negative_integer(options.prompt.max_scope_chars) then
+      errors[#errors + 1] = 'prompt.max_scope_chars must be a non-negative integer'
+    end
+    if not is_non_negative_integer(options.prompt.max_diagnostics_chars) then
+      errors[#errors + 1] = 'prompt.max_diagnostics_chars must be a non-negative integer'
+    end
+    if not is_non_negative_integer(options.prompt.max_symbol_count) then
+      errors[#errors + 1] = 'prompt.max_symbol_count must be a non-negative integer'
+    end
+    if not is_non_negative_integer(options.prompt.max_scope_count) then
+      errors[#errors + 1] = 'prompt.max_scope_count must be a non-negative integer'
+    end
+    if not is_non_negative_integer(options.prompt.max_diagnostic_count) then
+      errors[#errors + 1] = 'prompt.max_diagnostic_count must be a non-negative integer'
     end
   end
 
