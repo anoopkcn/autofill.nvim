@@ -6,12 +6,209 @@ local import_cache = {}
 local candidate_cache = {}
 local snapshot_cache = {}
 local candidate_generation = 0
+local IMPORT_SCAN_LINES = 80
+
+local SUPPORTED_IMPORT_FILETYPES = {
+  go = true,
+  javascript = true,
+  javascriptreact = true,
+  lua = true,
+  python = true,
+  rust = true,
+  typescript = true,
+  typescriptreact = true,
+}
 
 local function get_changedtick(bufnr)
   if not vim.api.nvim_buf_is_valid(bufnr) then
     return -1
   end
   return vim.api.nvim_buf_get_changedtick(bufnr)
+end
+
+local function add_import_name(names, ordered, raw_name, mode)
+  if type(raw_name) ~= 'string' then return end
+
+  local name = vim.trim(raw_name)
+  if name == '' then return end
+
+  if mode == 'path' then
+    name = name:match('([^/\\]+)$') or name
+    name = name:gsub('%.[^.]+$', '')
+  elseif mode == 'module' then
+    name = name:gsub('::', '.')
+    name = name:match('([^.]+)$') or name
+  end
+
+  if name == '' or names[name] then
+    return
+  end
+
+  names[name] = true
+  ordered[#ordered + 1] = name
+end
+
+local function strip_line_comments(text, prefix)
+  local out = {}
+  for _, line in ipairs(vim.split(text, '\n', { plain = true })) do
+    local start = line:find(prefix, 1, true)
+    if start then
+      line = line:sub(1, start - 1)
+    end
+    out[#out + 1] = line
+  end
+  return table.concat(out, '\n')
+end
+
+local function sanitize_import_text(filetype, text)
+  if filetype == 'javascript'
+    or filetype == 'javascriptreact'
+    or filetype == 'typescript'
+    or filetype == 'typescriptreact'
+    or filetype == 'go'
+    or filetype == 'rust'
+  then
+    text = text:gsub('/%*.-%*/', '')
+    text = strip_line_comments(text, '//')
+  elseif filetype == 'lua' then
+    text = strip_line_comments(text, '--')
+  elseif filetype == 'python' then
+    text = strip_line_comments(text, '#')
+  end
+
+  return text
+end
+
+local function extract_javascript_imports(text, names, ordered)
+  local pending = nil
+
+  local function try_statement(statement)
+    local spec = statement:match('^import%s+.-from%s+[\'"]([^\'"]+)[\'"]')
+      or statement:match('^export%s+.-from%s+[\'"]([^\'"]+)[\'"]')
+      or statement:match('^import%s*[\'"]([^\'"]+)[\'"]')
+    if spec then
+      add_import_name(names, ordered, spec, 'path')
+      return true
+    end
+    return false
+  end
+
+  for line in text:gmatch('[^\n]+') do
+    local trimmed = vim.trim(line)
+    if trimmed ~= '' then
+      if pending then
+        pending = pending .. ' ' .. trimmed
+        if try_statement(pending) then
+          pending = nil
+        end
+      elseif trimmed:match('^import%s') or trimmed:match('^export%s') then
+        if not try_statement(trimmed) then
+          pending = trimmed
+        end
+      end
+
+      for spec in trimmed:gmatch('require%s*%(%s*[\'"]([^\'"]+)[\'"]%s*%)') do
+        add_import_name(names, ordered, spec, 'path')
+      end
+      for spec in trimmed:gmatch('import%s*%(%s*[\'"]([^\'"]+)[\'"]%s*%)') do
+        add_import_name(names, ordered, spec, 'path')
+      end
+    end
+  end
+end
+
+local function extract_lua_imports(text, names, ordered)
+  for spec in text:gmatch('require%s*%(%s*[\'"]([^\'"]+)[\'"]%s*%)') do
+    add_import_name(names, ordered, spec, 'module')
+  end
+  for spec in text:gmatch('require%s+[\'"]([^\'"]+)[\'"]') do
+    add_import_name(names, ordered, spec, 'module')
+  end
+end
+
+local function extract_python_imports(text, names, ordered)
+  for line in text:gmatch('[^\n]+') do
+    local from_module = line:match('^%s*from%s+([%w_%.]+)%s+import%s+')
+    if from_module then
+      add_import_name(names, ordered, from_module, 'module')
+    end
+
+    local import_clause = line:match('^%s*import%s+([%w_%.%s,]+)')
+    if import_clause then
+      for module in import_clause:gmatch('([%w_%.]+)') do
+        add_import_name(names, ordered, module, 'module')
+      end
+    end
+  end
+end
+
+local function extract_go_imports(text, names, ordered)
+  local in_block = false
+
+  for line in text:gmatch('[^\n]+') do
+    if line:match('^%s*import%s*%(%s*$') then
+      in_block = true
+    elseif in_block then
+      if line:match('^%s*%)') then
+        in_block = false
+      else
+        for spec in line:gmatch('[\'"`]([^\'"`]+)[\'"`]') do
+          add_import_name(names, ordered, spec, 'path')
+        end
+      end
+    else
+      local spec = line:match('^%s*import%s+[_%.%w]*%s*[\'"`]([^\'"`]+)[\'"`]')
+      if spec then
+        add_import_name(names, ordered, spec, 'path')
+      end
+    end
+  end
+end
+
+local function extract_rust_imports(text, names, ordered)
+  for line in text:gmatch('[^\n]+') do
+    local path = line:match('^%s*use%s+([^;]+);')
+    if path then
+      path = path:gsub('%s+as%s+[%w_]+$', '')
+      path = path:gsub('::%b{}', '')
+      add_import_name(names, ordered, path, 'module')
+    end
+
+    local module = line:match('^%s*pub%s+mod%s+([%w_]+)%s*;')
+      or line:match('^%s*mod%s+([%w_]+)%s*;')
+    if module then
+      add_import_name(names, ordered, module, 'module')
+    end
+  end
+end
+
+local function extract_import_names(filetype, text)
+  local names = {}
+  local ordered = {}
+
+  if not SUPPORTED_IMPORT_FILETYPES[filetype] then
+    return names, ordered
+  end
+
+  text = sanitize_import_text(filetype, text)
+
+  if filetype == 'javascript'
+    or filetype == 'javascriptreact'
+    or filetype == 'typescript'
+    or filetype == 'typescriptreact'
+  then
+    extract_javascript_imports(text, names, ordered)
+  elseif filetype == 'lua' then
+    extract_lua_imports(text, names, ordered)
+  elseif filetype == 'python' then
+    extract_python_imports(text, names, ordered)
+  elseif filetype == 'go' then
+    extract_go_imports(text, names, ordered)
+  elseif filetype == 'rust' then
+    extract_rust_imports(text, names, ordered)
+  end
+
+  return names, ordered
 end
 
 local function get_import_names(bufnr)
@@ -21,22 +218,10 @@ local function get_import_names(bufnr)
     return cached.names, cached.signature
   end
 
-  local names = {}
-  local ordered = {}
-  local lines = vim.api.nvim_buf_get_lines(bufnr, 0, 30, false)
-  for _, line in ipairs(lines) do
-    -- Match quoted strings in import/require statements
-    for name in line:gmatch('["\']([^"\']+)["\']') do
-      -- Extract basename (last path component, without extension)
-      local base = name:match('([^/\\]+)$') or name
-      base = base:gsub('%.[^.]+$', '')
-      if not names[base] then
-        names[base] = true
-        ordered[#ordered + 1] = base
-      end
-    end
-  end
-
+  local filetype = vim.bo[bufnr].filetype
+  local lines = vim.api.nvim_buf_get_lines(bufnr, 0, IMPORT_SCAN_LINES, false)
+  local text = table.concat(lines, '\n')
+  local names, ordered = extract_import_names(filetype, text)
   table.sort(ordered)
   local signature = table.concat(ordered, ',')
   import_cache[bufnr] = {
