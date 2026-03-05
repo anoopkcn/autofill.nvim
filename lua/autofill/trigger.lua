@@ -11,15 +11,39 @@ local util = require('autofill.util')
 
 local M = {}
 
-local timer = nil
-local last_request_time = 0
-local last_input_time = 0
 local augroup = nil
-local change_seq = 0
-local pending_snapshot = nil
-local active_request_seq = 0
+local sessions = {}
 
 local PARTIAL_IDLE_MS = 75
+
+local function ensure_session(bufnr)
+  local session = sessions[bufnr]
+  if session then
+    return session
+  end
+
+  session = {
+    timer = nil,
+    last_request_time = 0,
+    last_input_time = 0,
+    change_seq = 0,
+    pending_snapshot = nil,
+    active_request_seq = 0,
+  }
+  sessions[bufnr] = session
+  return session
+end
+
+local function get_session(bufnr)
+  return sessions[bufnr]
+end
+
+local function close_session_timer(session)
+  if not session or not session.timer then return end
+  session.timer:stop()
+  session.timer:close()
+  session.timer = nil
+end
 
 local function clone_cursor(cursor)
   return { cursor[1], cursor[2] }
@@ -29,9 +53,10 @@ local function same_cursor(a, b)
   return a and b and a[1] == b[1] and a[2] == b[2]
 end
 
-local function make_snapshot(bufnr, cursor, seq, profile)
+local function make_snapshot(bufnr, session, cursor, seq, profile)
   return {
     bufnr = bufnr,
+    session = session,
     cursor = clone_cursor(cursor),
     changedtick = vim.api.nvim_buf_get_changedtick(bufnr),
     seq = seq,
@@ -41,8 +66,10 @@ end
 
 local function snapshot_is_current(snapshot)
   if not snapshot or not augroup then return false end
+  local session = get_session(snapshot.bufnr)
+  if session ~= snapshot.session then return false end
   if vim.fn.mode() ~= 'i' then return false end
-  if snapshot.seq ~= change_seq then return false end
+  if snapshot.seq ~= session.change_seq then return false end
   if not vim.api.nvim_buf_is_valid(snapshot.bufnr) then return false end
   if vim.api.nvim_get_current_buf() ~= snapshot.bufnr then return false end
   if vim.api.nvim_buf_get_changedtick(snapshot.bufnr) ~= snapshot.changedtick then
@@ -78,6 +105,7 @@ local function do_complete(snapshot)
   profiler.mark(snapshot.profile, 'timer_fire')
 
   local bufnr = snapshot.bufnr
+  local session = snapshot.session
   local cursor = snapshot.cursor
   local filetype = vim.bo[bufnr].filetype
   local buf_ctx = buffer_context.get_text(bufnr, cursor)
@@ -113,14 +141,16 @@ local function do_complete(snapshot)
     return
   end
 
-  last_request_time = vim.uv.now()
-  active_request_seq = snapshot.seq
+  session.last_request_time = vim.uv.now()
+  session.active_request_seq = snapshot.seq
   profiler.mark(snapshot.profile, 'request_sent')
 
   local opts = {
+    request_session_key = bufnr,
     on_complete = function(suggestion)
-      if active_request_seq == snapshot.seq then
-        active_request_seq = 0
+      if get_session(bufnr) ~= session then return end
+      if session.active_request_seq == snapshot.seq then
+        session.active_request_seq = 0
       end
       if not snapshot_is_current(snapshot) then return end
       cache.set(cache_key, suggestion)
@@ -131,8 +161,9 @@ local function do_complete(snapshot)
 
   if config.streaming_display then
     opts.on_partial = function(text_so_far)
+      if get_session(bufnr) ~= session then return end
       if not snapshot_is_current(snapshot) then return end
-      if vim.uv.now() - last_input_time < PARTIAL_IDLE_MS then return end
+      if vim.uv.now() - session.last_input_time < PARTIAL_IDLE_MS then return end
 
       profiler.mark(snapshot.profile, 'first_partial')
       vim.schedule(function()
@@ -144,12 +175,12 @@ local function do_complete(snapshot)
   backend.complete(ctx, opts)
 end
 
-local function schedule_complete()
-  if not pending_snapshot then return end
+local function schedule_complete(bufnr, session)
+  if not session or not session.pending_snapshot then return end
 
   local config = require('autofill.config').get()
   local now = vim.uv.now()
-  local elapsed = now - last_request_time
+  local elapsed = now - session.last_request_time
   local delay = config.debounce_ms
 
   -- Apply throttle: if we recently sent a request, add extra delay
@@ -160,28 +191,49 @@ local function schedule_complete()
     end
   end
 
-  if timer then
-    timer:stop()
+  if session.timer then
+    session.timer:stop()
   else
-    timer = vim.uv.new_timer()
-    if not timer then return end
+    session.timer = vim.uv.new_timer()
+    if not session.timer then return end
   end
 
-  timer:start(delay, 0, vim.schedule_wrap(function()
+  session.timer:start(delay, 0, vim.schedule_wrap(function()
     if not augroup then return end
-    local snapshot = pending_snapshot
-    pending_snapshot = nil
+    if get_session(bufnr) ~= session then return end
+    local snapshot = session.pending_snapshot
+    session.pending_snapshot = nil
     if snapshot and vim.fn.mode() == 'i' then
       do_complete(snapshot)
     end
   end))
 end
 
-local function clear_pending_completion()
-  pending_snapshot = nil
-  if timer then
-    timer:stop()
+local function clear_pending_completion(session)
+  if not session then return end
+  session.pending_snapshot = nil
+  if session.timer then
+    session.timer:stop()
   end
+end
+
+local function stop_buffer_session(bufnr, opts)
+  opts = opts or {}
+
+  local session = get_session(bufnr)
+  if session then
+    clear_pending_completion(session)
+    session.active_request_seq = 0
+    close_session_timer(session)
+    sessions[bufnr] = nil
+  end
+
+  if opts.clear_cache then
+    cache.clear_quick_for_buffer(bufnr)
+  end
+
+  request.cancel(bufnr)
+  ghost.clear(bufnr)
 end
 
 local function on_text_changed()
@@ -189,6 +241,7 @@ local function on_text_changed()
 
   local config = require('autofill.config').get()
   local bufnr = vim.api.nvim_get_current_buf()
+  local session = ensure_session(bufnr)
   local ft = vim.bo[bufnr].filetype
 
   -- Check filetype exclusion
@@ -196,40 +249,33 @@ local function on_text_changed()
     if ft == excluded then return end
   end
 
-  last_input_time = vim.uv.now()
-  change_seq = change_seq + 1
+  session.last_input_time = vim.uv.now()
+  session.change_seq = session.change_seq + 1
 
   -- Try to advance existing ghost text
-  if ghost.is_visible() and ghost.advance(bufnr) then
-    clear_pending_completion()
+  if ghost.is_visible(bufnr) and ghost.advance(bufnr) then
+    clear_pending_completion(session)
     return
   end
 
-  pending_snapshot = make_snapshot(
+  session.pending_snapshot = make_snapshot(
     bufnr,
+    session,
     vim.api.nvim_win_get_cursor(0),
-    change_seq,
+    session.change_seq,
     profiler.start('completion')
   )
 
   -- Schedule a new completion
-  schedule_complete()
+  schedule_complete(bufnr, session)
 end
 
-local function on_insert_leave()
-  clear_pending_completion()
-  active_request_seq = 0
-  request.cancel()
-  ghost.clear()
+local function on_insert_leave(bufnr)
+  stop_buffer_session(bufnr)
 end
 
-local function on_buf_leave()
-  local bufnr = vim.api.nvim_get_current_buf()
-  clear_pending_completion()
-  active_request_seq = 0
-  cache.clear_quick_for_buffer(bufnr)
-  request.cancel()
-  ghost.clear()
+local function on_buf_leave(bufnr)
+  stop_buffer_session(bufnr, { clear_cache = true })
 end
 
 function M.start()
@@ -244,12 +290,16 @@ function M.start()
 
   vim.api.nvim_create_autocmd('InsertLeave', {
     group = augroup,
-    callback = on_insert_leave,
+    callback = function(ev)
+      on_insert_leave(ev.buf)
+    end,
   })
 
   vim.api.nvim_create_autocmd('BufLeave', {
     group = augroup,
-    callback = on_buf_leave,
+    callback = function(ev)
+      on_buf_leave(ev.buf)
+    end,
   })
 
   vim.api.nvim_create_autocmd({ 'BufEnter', 'LspAttach' }, {
@@ -283,9 +333,9 @@ function M.start()
   vim.api.nvim_create_autocmd({ 'BufDelete', 'BufWipeout' }, {
     group = augroup,
     callback = function(ev)
+      stop_buffer_session(ev.buf, { clear_cache = true })
       lsp_context.clear(ev.buf)
       neighbors_context.clear(ev.buf)
-      cache.clear_quick_for_buffer(ev.buf)
     end,
   })
 
@@ -297,20 +347,17 @@ function M.stop()
     vim.api.nvim_del_augroup_by_id(augroup)
     augroup = nil
   end
-  if timer then
-    timer:stop()
-    timer:close()
-    timer = nil
+  for bufnr, session in pairs(sessions) do
+    clear_pending_completion(session)
+    close_session_timer(session)
+    if vim.api.nvim_buf_is_valid(bufnr) then
+      cache.clear_quick_for_buffer(bufnr)
+    end
   end
-  local bufnr = vim.api.nvim_get_current_buf()
-  pending_snapshot = nil
-  active_request_seq = 0
-  if bufnr and vim.api.nvim_buf_is_valid(bufnr) then
-    cache.clear_quick_for_buffer(bufnr)
-  end
+  sessions = {}
   lsp_context.stop()
   request.cancel()
-  ghost.clear()
+  ghost.clear_all()
   util.log('debug', 'Trigger system stopped')
 end
 

@@ -3,14 +3,7 @@ local util = require('autofill.util')
 local M = {}
 
 local ns = vim.api.nvim_create_namespace('autofill_ghost')
-local state = {
-  bufnr = nil,
-  line = nil,
-  col = nil,
-  text = nil,
-  extmark_id = nil,
-}
-local last_render_time = 0
+local states = {}
 local THROTTLE_MS = 75
 local plug_keymaps_installed = false
 local direct_keymaps = {}
@@ -52,6 +45,74 @@ local KEYMAP_SPECS = {
     end,
   },
 }
+
+local function resolve_bufnr(bufnr)
+  if bufnr ~= nil then
+    return bufnr
+  end
+  return vim.api.nvim_get_current_buf()
+end
+
+local function get_buffer_state(bufnr, create)
+  bufnr = resolve_bufnr(bufnr)
+  local state = states[bufnr]
+  if not state and create then
+    state = {
+      bufnr = bufnr,
+      line = nil,
+      col = nil,
+      text = nil,
+      extmark_id = nil,
+      last_render_time = 0,
+    }
+    states[bufnr] = state
+  end
+  if state then
+    state.bufnr = bufnr
+  end
+  return state, bufnr
+end
+
+local function reset_state(state)
+  if not state then return end
+  state.line = nil
+  state.col = nil
+  state.text = nil
+  state.extmark_id = nil
+end
+
+local function render_state(state)
+  if not state or not state.text or not state.bufnr then return end
+  if not vim.api.nvim_buf_is_valid(state.bufnr) then
+    M.clear(state.bufnr)
+    return
+  end
+
+  local lines = vim.split(state.text, '\n', { plain = true })
+  if #lines == 0 then return end
+
+  local opts = {
+    virt_text = { { lines[1], 'AutofillGhost' } },
+    virt_text_pos = 'inline',
+    hl_mode = 'combine',
+  }
+
+  if #lines > 1 then
+    local virt_lines = {}
+    for i = 2, #lines do
+      table.insert(virt_lines, { { lines[i], 'AutofillGhost' } })
+    end
+    opts.virt_lines = virt_lines
+  end
+
+  state.extmark_id = vim.api.nvim_buf_set_extmark(
+    state.bufnr,
+    ns,
+    state.line - 1,
+    state.col,
+    opts
+  )
+end
 
 local function delete_insert_mapping(lhs)
   if lhs then
@@ -156,90 +217,69 @@ local function install_direct_keymap(name, lhs)
   }
 end
 
-function M.is_visible()
-  return state.text ~= nil
+function M.is_visible(bufnr)
+  local state = get_buffer_state(bufnr, false)
+  return state ~= nil and state.text ~= nil
 end
 
-function M.get_state()
-  return state
+function M.get_state(bufnr)
+  return get_buffer_state(bufnr, false)
 end
 
 function M.show(bufnr, line, col, text, is_partial)
   if not text or text == '' then return end
-  if state.bufnr == bufnr and state.line == line and state.col == col and state.text == text then
+  local state = get_buffer_state(bufnr, true)
+  if state.line == line and state.col == col and state.text == text then
     return
   end
 
   -- Throttle partial (streaming) renders to avoid flicker
   if is_partial then
     local now = vim.uv.now()
-    if now - last_render_time < THROTTLE_MS then
+    if now - state.last_render_time < THROTTLE_MS then
       return
     end
   end
 
-  M.clear()
-
-  state.bufnr = bufnr
+  M.clear(bufnr)
+  state = get_buffer_state(bufnr, true)
   state.line = line
   state.col = col
   state.text = text
 
-  M._render()
-  last_render_time = vim.uv.now()
+  render_state(state)
+  state.last_render_time = vim.uv.now()
 end
 
-function M._render()
-  if not state.text or not state.bufnr then return end
-  if not vim.api.nvim_buf_is_valid(state.bufnr) then
-    M.clear()
-    return
-  end
-
-  local lines = vim.split(state.text, '\n', { plain = true })
-  if #lines == 0 then return end
-
-  local opts = {
-    virt_text = { { lines[1], 'AutofillGhost' } },
-    virt_text_pos = 'inline',
-    hl_mode = 'combine',
-  }
-
-  if #lines > 1 then
-    local virt_lines = {}
-    for i = 2, #lines do
-      table.insert(virt_lines, { { lines[i], 'AutofillGhost' } })
-    end
-    opts.virt_lines = virt_lines
-  end
-
-  -- Place extmark at current cursor line (0-indexed)
-  state.extmark_id = vim.api.nvim_buf_set_extmark(
-    state.bufnr,
-    ns,
-    state.line - 1,
-    state.col,
-    opts
-  )
+function M._render(bufnr)
+  local state = get_buffer_state(bufnr, false)
+  render_state(state)
 end
 
 function M.clear(bufnr)
-  local target = bufnr or state.bufnr
+  local state, target = get_buffer_state(bufnr, false)
+  target = target or resolve_bufnr(bufnr)
   if target and vim.api.nvim_buf_is_valid(target) then
     vim.api.nvim_buf_clear_namespace(target, ns, 0, -1)
   end
-  state.bufnr = nil
-  state.line = nil
-  state.col = nil
-  state.text = nil
-  state.extmark_id = nil
+  reset_state(state)
 end
 
-function M.accept()
-  if not state.text then return false end
+function M.clear_all()
+  for bufnr, state in pairs(states) do
+    if vim.api.nvim_buf_is_valid(bufnr) then
+      vim.api.nvim_buf_clear_namespace(bufnr, ns, 0, -1)
+    end
+    reset_state(state)
+  end
+end
+
+function M.accept(bufnr)
+  local state = get_buffer_state(bufnr, false)
+  if not state or not state.text then return false end
 
   local text = state.text
-  M.clear()
+  M.clear(state.bufnr)
 
   -- Insert the text at the cursor
   local lines = vim.split(text, '\n', { plain = true })
@@ -248,8 +288,9 @@ function M.accept()
   return true
 end
 
-function M.accept_word()
-  if not state.text then return false end
+function M.accept_word(bufnr)
+  local state = get_buffer_state(bufnr, false)
+  if not state or not state.text then return false end
 
   -- Extract the next word
   local word = state.text:match('^(%S+)')
@@ -260,7 +301,7 @@ function M.accept_word()
   if not word then return false end
 
   local remainder = state.text:sub(#word + 1)
-  M.clear()
+  M.clear(state.bufnr)
 
   -- Insert the word
   local word_lines = vim.split(word, '\n', { plain = true })
@@ -277,7 +318,8 @@ function M.accept_word()
 end
 
 function M.advance(bufnr)
-  if not state.text or state.bufnr ~= bufnr then return false end
+  local state = get_buffer_state(bufnr, false)
+  if not state or not state.text or state.bufnr ~= bufnr then return false end
 
   local cursor = vim.api.nvim_win_get_cursor(0)
   local row, col = cursor[1], cursor[2]
@@ -307,8 +349,8 @@ function M.advance(bufnr)
     state.text = remainder
     -- Clear old extmark and render new one
     vim.api.nvim_buf_clear_namespace(bufnr, ns, 0, -1)
-    M._render()
-    last_render_time = vim.uv.now()
+    render_state(state)
+    state.last_render_time = vim.uv.now()
     return true
   end
 

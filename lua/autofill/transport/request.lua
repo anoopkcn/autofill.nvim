@@ -3,20 +3,51 @@ local util = require('autofill.util')
 
 local M = {}
 
-local active_obj = nil
-local request_id = 0
+local DEFAULT_SESSION_KEY = '__global__'
+local sessions = {}
+local next_request_token = 0
+
+local function normalize_session_key(session_key)
+  if session_key == nil then
+    return DEFAULT_SESSION_KEY
+  end
+  return session_key
+end
+
+local function ensure_session(session_key)
+  session_key = normalize_session_key(session_key)
+  local session = sessions[session_key]
+  if not session then
+    session = {
+      request_token = 0,
+      active_obj = nil,
+    }
+    sessions[session_key] = session
+  end
+  return session, session_key
+end
+
+local function release_session(session_key)
+  sessions[session_key] = nil
+end
 
 function M.send(opts, callback)
-  M.cancel()
+  local session_key = opts.session_key
+  M.cancel(session_key)
 
-  request_id = request_id + 1
-  local my_id = request_id
+  local session
+  session, session_key = ensure_session(session_key)
+
+  next_request_token = next_request_token + 1
+  local my_token = next_request_token
+  session.request_token = my_token
 
   local function is_stale()
-    return my_id ~= request_id
+    local current = sessions[session_key]
+    return not current or current.request_token ~= my_token
   end
 
-  active_obj = http.request({
+  session.active_obj = http.request({
     url = opts.url,
     headers = opts.headers,
     body = opts.body,
@@ -30,7 +61,8 @@ function M.send(opts, callback)
     end,
     on_done = function(stdout)
       if is_stale() then return end
-      active_obj = nil
+      session.active_obj = nil
+      release_session(session_key)
       if opts.on_status and stdout and stdout.status then
         opts.on_status(stdout.status, stdout)
       end
@@ -38,7 +70,8 @@ function M.send(opts, callback)
     end,
     on_error = function(err)
       if is_stale() then return end
-      active_obj = nil
+      session.active_obj = nil
+      release_session(session_key)
       if opts.on_status and err and err.status then
         opts.on_status(err.status, err)
       end
@@ -53,18 +86,45 @@ function M.send(opts, callback)
   return my_id
 end
 
-function M.cancel()
-  request_id = request_id + 1
-  if active_obj then
-    local obj = active_obj
-    active_obj = nil
+function M.cancel(session_key)
+  if session_key == nil then
+    local keys = vim.tbl_keys(sessions)
+    for _, key in ipairs(keys) do
+      M.cancel(key)
+    end
+    return
+  end
+
+  session_key = normalize_session_key(session_key)
+  local session = sessions[session_key]
+  if not session then
+    return
+  end
+
+  next_request_token = next_request_token + 1
+  session.request_token = next_request_token
+  if session.active_obj then
+    local obj = session.active_obj
+    session.active_obj = nil
     pcall(function() obj:kill(9) end)
     util.log('debug', 'Cancelled in-flight request')
   end
+  release_session(session_key)
 end
 
-function M.is_active()
-  return active_obj ~= nil
+function M.is_active(session_key)
+  if session_key == nil then
+    for _, session in pairs(sessions) do
+      if session.active_obj ~= nil then
+        return true
+      end
+    end
+    return false
+  end
+
+  session_key = normalize_session_key(session_key)
+  local session = sessions[session_key]
+  return session ~= nil and session.active_obj ~= nil
 end
 
 return M

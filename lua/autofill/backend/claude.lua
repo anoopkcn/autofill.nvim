@@ -78,6 +78,7 @@ function M.complete(ctx, opts)
     },
     timeout_ms = claude_config.timeout_ms,
     stream = use_stream,
+    session_key = opts.request_session_key,
     on_error = opts.on_error,
     on_data = function(payload)
       local ok, data = pcall(vim.json.decode, payload)
