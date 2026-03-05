@@ -18,10 +18,14 @@ local SUPPORTED_BACKEND_DEFAULTS = {
     model = 'gemini-2.5-flash',
     timeout_ms = 10000,
   },
+  openai = {
+    api_key_env = 'OPENAI_API_KEY',
+    model = 'gpt-5-mini',
+    timeout_ms = 10000,
+  },
 }
 
 local REMOVED_BACKEND_CONFIGS = {
-  openai = true,
   ollama = true,
 }
 

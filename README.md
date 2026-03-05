@@ -7,7 +7,7 @@ AI-assisted ghost-text autocompletion for Neovim.
 ## Features
 
 - Ghost-text completions in insert mode
-- Supported backends: Claude and Gemini
+- Supported backends: Claude, Gemini, and OpenAI
 - Cached completions and quick local-prefix reuse
 - Optional Treesitter, LSP, diagnostics, and neighbor-file context
 - `:Autofill test` for live backend checks
@@ -27,8 +27,9 @@ AI-assisted ghost-text autocompletion for Neovim.
 | --- | --- | --- |
 | `claude` | `ANTHROPIC_API_KEY` | `claude-sonnet-4-20250514` |
 | `gemini` | `GEMINI_API_KEY` | `gemini-2.5-flash` |
+| `openai` | `OPENAI_API_KEY` | `gpt-5-mini` |
 
-`openai` and `ollama` are intentionally not supported in the current release surface.
+`ollama` is intentionally not supported in the current release surface.
 
 ## Installation
 
@@ -131,12 +132,17 @@ require("autofill").setup({
     model = "gemini-2.5-flash",
     timeout_ms = 10000,
   },
+  openai = {
+    api_key_env = "OPENAI_API_KEY",
+    model = "gpt-5-mini",
+    timeout_ms = 10000,
+  },
 })
 ```
 
 Important options:
 
-- `backend`: `claude` or `gemini`
+- `backend`: `claude`, `gemini`, or `openai`
 - `streaming_display`: use streaming ghost updates when `true`; use a real non-streaming backend request when `false`
 - `profiling`: include timing output in `:Autofill test`
 - `filetypes_exclude`: disable the plugin for specific filetypes

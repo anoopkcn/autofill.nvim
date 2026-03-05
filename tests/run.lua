@@ -4,6 +4,7 @@ local TESTS = {
   { name = 'util', module = 'tests.util_spec' },
   { name = 'keymaps', module = 'tests.keymaps_spec' },
   { name = 'cache', module = 'tests.cache_spec' },
+  { name = 'backend', module = 'tests.backend_spec' },
   { name = 'trigger', module = 'tests.trigger_spec' },
   { name = 'transport', module = 'tests.transport_spec' },
 }

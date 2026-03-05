@@ -5,6 +5,7 @@ local M = {}
 local SUPPORTED_BACKENDS = {
   claude = true,
   gemini = true,
+  openai = true,
 }
 
 local function supported_names()
