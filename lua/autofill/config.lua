@@ -7,6 +7,24 @@ local VALID_LOG_LEVELS = {
   error = true,
 }
 
+local SUPPORTED_BACKEND_DEFAULTS = {
+  claude = {
+    api_key_env = 'ANTHROPIC_API_KEY',
+    model = 'claude-sonnet-4-20250514',
+    timeout_ms = 10000,
+  },
+  gemini = {
+    api_key_env = 'GEMINI_API_KEY',
+    model = 'gemini-2.5-flash',
+    timeout_ms = 10000,
+  },
+}
+
+local REMOVED_BACKEND_CONFIGS = {
+  openai = true,
+  ollama = true,
+}
+
 M.defaults = {
   enabled = true,
   backend = 'claude',
@@ -29,27 +47,11 @@ M.defaults = {
     accept_word = nil,
     dismiss = nil,
   },
-  claude = {
-    api_key_env = 'ANTHROPIC_API_KEY',
-    model = 'claude-sonnet-4-20250514',
-    timeout_ms = 10000,
-  },
-  openai = {
-    api_key_env = 'OPENAI_API_KEY',
-    model = 'gpt-4o-mini',
-    timeout_ms = 10000,
-  },
-  gemini = {
-    api_key_env = 'GEMINI_API_KEY',
-    model = 'gemini-2.5-flash',
-    timeout_ms = 10000,
-  },
-  ollama = {
-    model = 'codellama',
-    url = 'http://localhost:11434',
-    timeout_ms = 30000,
-  },
 }
+
+for backend_name, backend_defaults in pairs(SUPPORTED_BACKEND_DEFAULTS) do
+  M.defaults[backend_name] = vim.deepcopy(backend_defaults)
+end
 
 M.options = vim.tbl_deep_extend('force', {}, M.defaults)
 
@@ -98,6 +100,12 @@ function M.inspect(options)
     errors[#errors + 1] = 'backend must be a non-empty string'
   elseif not backend.is_supported(options.backend) then
     errors[#errors + 1] = 'backend "' .. options.backend .. '" is not supported'
+  end
+
+  for backend_name in pairs(REMOVED_BACKEND_CONFIGS) do
+    if options[backend_name] ~= nil then
+      errors[#errors + 1] = backend_name .. ' config is no longer supported'
+    end
   end
 
   if not is_non_negative_integer(options.debounce_ms) then
@@ -172,9 +180,7 @@ function M.inspect(options)
     if type(backend_opts) ~= 'table' then
       errors[#errors + 1] = backend_name .. ' must be a table'
     else
-      if backend_name ~= 'ollama' then
-        validate_optional_string(backend_opts.api_key_env, backend_name .. '.api_key_env', errors)
-      end
+      validate_optional_string(backend_opts.api_key_env, backend_name .. '.api_key_env', errors)
       validate_optional_string(backend_opts.model, backend_name .. '.model', errors)
       if not is_positive_integer(backend_opts.timeout_ms) then
         errors[#errors + 1] = backend_name .. '.timeout_ms must be a positive integer'

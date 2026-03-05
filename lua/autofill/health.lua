@@ -48,6 +48,7 @@ function M.check()
     warn(message)
   end
 
+  info('Supported backends: ' .. table.concat(backend.supported_backends(), ', '))
   info('Configured backend: ' .. options.backend)
   info('Direct keymaps: ' .. vim.inspect(options.keymaps))
   info('Plug mappings: ' .. vim.inspect(ghost.get_plug_mappings()))
