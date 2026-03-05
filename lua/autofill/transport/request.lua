@@ -83,7 +83,7 @@ function M.send(opts, callback)
     end,
   })
 
-  return my_id
+  return my_token
 end
 
 function M.cancel(session_key)

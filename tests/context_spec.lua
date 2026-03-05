@@ -1,0 +1,313 @@
+local helpers = require('tests.helpers')
+
+local function find_symbol(symbols, name)
+  for _, symbol in ipairs(symbols or {}) do
+    if symbol.name == name then
+      return symbol
+    end
+  end
+  return nil
+end
+
+return function()
+  helpers.reset_runtime()
+
+  local config = require('autofill.config')
+  local buffer_context = require('autofill.context.buffer')
+  local context = require('autofill.context')
+  local treesitter_context = require('autofill.context.treesitter')
+  local lsp_context = require('autofill.context.lsp')
+  local neighbors_context = require('autofill.context.neighbors')
+  local prompt = require('autofill.backend.prompt')
+
+  config.setup({
+    context_window = 16,
+    context_ratio = 0.5,
+  })
+
+  local buffer_bufnr = helpers.new_buffer({
+    'prefix prefix prefix',
+    'cursor-here-suffix',
+    'tail tail tail',
+  }, {
+    filetype = 'lua',
+    row = 2,
+    col = 6,
+  })
+  local sliced = buffer_context.get_text(buffer_bufnr, { 2, 6 })
+  assert(#sliced.before <= 8 and #sliced.after <= 8, 'buffer context should honor the configured byte budgets')
+  assert(sliced.is_truncated_before and sliced.is_truncated_after, 'buffer context should flag truncated slices')
+
+  config.setup({
+    context_window = 200,
+    context_ratio = 0.5,
+  })
+
+  local original_ts_get_context = treesitter_context.get_context
+  local original_lsp_get_context = lsp_context.get_context
+  local original_lsp_get_symbols = lsp_context.get_symbols
+  local original_neighbors_get_context = neighbors_context.get_context
+
+  treesitter_context.get_context = function()
+    return {
+      scopes = {
+        { type = 'function_declaration', line = 3, header = 'local function demo()' },
+      },
+      in_comment = false,
+      in_string = true,
+    }
+  end
+  lsp_context.get_context = function()
+    return {
+      diagnostics = {
+        { line = 7, severity = vim.diagnostic.severity.WARN, message = 'unused local value' },
+      },
+    }
+  end
+  lsp_context.get_symbols = function()
+    return {
+      { kind = 'Function', name = 'demo', line = 3, container = '' },
+    }
+  end
+  neighbors_context.get_context = function()
+    return {
+      { filename = 'helper.lua', content = 'return 1' },
+    }
+  end
+
+  local gather_bufnr = helpers.new_buffer({
+    'local example = ',
+  }, {
+    name = '/tmp/autofill-context-prompt/sample.lua',
+    filetype = 'lua',
+    row = 1,
+    col = 16,
+  })
+  local gathered = context.gather(gather_bufnr, { 1, 16 })
+  local message = prompt.build_user_message(gathered)
+  assert(message:find('File: sample.lua', 1, true), 'prompt should include the current filename')
+  assert(message:find('Language: lua', 1, true), 'prompt should include the current filetype')
+  assert(message:find('Related files:\n--- helper.lua ---\nreturn 1', 1, true), 'prompt should include neighbor file snapshots')
+  assert(message:find('File outline:\n  Function demo %(line 3%)'), 'prompt should include LSP symbols')
+  assert(message:find('Scope chain:\n  function_declaration %(line 3%): local function demo%(%)'), 'prompt should include Treesitter scopes')
+  assert(message:find('Cursor is inside a string.', 1, true), 'prompt should include Treesitter semantic hints')
+  assert(message:find('Nearby diagnostics:\n  Line 7 %[WARN%]: unused local value'), 'prompt should include nearby diagnostics')
+  assert(message:find('local example = <CURSOR>', 1, true), 'prompt should include the cursor marker')
+
+  treesitter_context.get_context = original_ts_get_context
+  lsp_context.get_context = original_lsp_get_context
+  lsp_context.get_symbols = original_lsp_get_symbols
+  neighbors_context.get_context = original_neighbors_get_context
+
+  local original_get_clients = vim.lsp.get_clients
+  local original_make_params = vim.lsp.util.make_text_document_params
+  local original_buf_request_all = vim.lsp.buf_request_all
+  local original_diagnostic_get = vim.diagnostic.get
+
+  vim.lsp.get_clients = function(opts)
+    if opts and opts.method == 'textDocument/documentSymbol' then
+      return { { id = 1 }, { id = 2 } }
+    end
+    return {}
+  end
+  vim.lsp.util.make_text_document_params = function()
+    return { uri = 'file:///tmp/autofill-context-lsp/example.lua' }
+  end
+  vim.lsp.buf_request_all = function(_, _, _, callback)
+    callback({
+      one = {
+        result = {
+          {
+            name = 'Outer',
+            kind = 12,
+            range = { start = { line = 1 } },
+            children = {
+              {
+                name = 'Inner',
+                kind = 6,
+                range = { start = { line = 2 } },
+              },
+            },
+          },
+          {
+            name = 'Outer',
+            kind = 12,
+            range = { start = { line = 1 } },
+          },
+        },
+      },
+      two = {
+        result = {
+          {
+            name = 'Var',
+            kind = 13,
+            location = { range = { start = { line = 8 } } },
+          },
+        },
+      },
+    })
+  end
+  vim.diagnostic.get = function()
+    return {
+      { lnum = 9, message = 'closest', severity = vim.diagnostic.severity.ERROR },
+      { lnum = 8, message = 'second closest', severity = vim.diagnostic.severity.WARN },
+      { lnum = 20, message = 'too far away', severity = vim.diagnostic.severity.INFO },
+    }
+  end
+
+  local lsp_bufnr = helpers.new_buffer({
+    'local x = 1',
+    'local y = 2',
+    'local z = 3',
+    'local a = 4',
+    'local b = 5',
+    'local c = 6',
+    'local d = 7',
+    'local e = 8',
+    'local f = 9',
+    'local g = 10',
+  }, {
+    name = '/tmp/autofill-context-lsp/example.lua',
+    filetype = 'lua',
+    row = 10,
+    col = 0,
+  })
+  lsp_context.refresh_symbols(lsp_bufnr, { immediate = true })
+  helpers.wait(200, function()
+    local symbols = lsp_context.get_symbols(lsp_bufnr)
+    return symbols ~= nil and #symbols == 3
+  end, 'LSP symbols were not refreshed')
+
+  local symbols = lsp_context.get_symbols(lsp_bufnr)
+  assert(find_symbol(symbols, 'Outer') ~= nil, 'LSP symbols should include top-level document symbols')
+  assert(find_symbol(symbols, 'Inner') ~= nil, 'LSP symbols should include nested child symbols')
+  assert(find_symbol(symbols, 'Var') ~= nil, 'LSP symbols should include location-based symbols')
+
+  local diagnostics = lsp_context.get_context(lsp_bufnr, { 10, 0 })
+  assert(diagnostics and #diagnostics.diagnostics == 2, 'LSP diagnostics should filter to nearby entries')
+  assert(diagnostics.diagnostics[1].message == 'closest', 'LSP diagnostics should sort by proximity')
+  assert(diagnostics.diagnostics[2].message == 'second closest', 'LSP diagnostics should keep the next closest entries')
+
+  vim.lsp.get_clients = original_get_clients
+  vim.lsp.util.make_text_document_params = original_make_params
+  vim.lsp.buf_request_all = original_buf_request_all
+  vim.diagnostic.get = original_diagnostic_get
+
+  config.setup({
+    neighbors = {
+      enabled = true,
+      budget = 120,
+      max_files = 2,
+    },
+  })
+
+  local current_bufnr = helpers.new_buffer({
+    "import foo from './foo'",
+    'const value = foo()',
+  }, {
+    name = '/tmp/autofill-context-neighbors/main.js',
+    filetype = 'javascript',
+    row = 2,
+    col = 5,
+  })
+  helpers.new_buffer({
+    'export default function foo() {',
+    '  return 1',
+    '}',
+  }, {
+    name = '/tmp/autofill-context-neighbors/foo.js',
+    filetype = 'javascript',
+  })
+  helpers.new_buffer({
+    'export const util = () => 2',
+  }, {
+    name = '/tmp/autofill-context-neighbors/util.js',
+    filetype = 'javascript',
+  })
+  helpers.new_buffer({
+    'def other():',
+    '    return 3',
+  }, {
+    name = '/tmp/autofill-context-other/other.py',
+    filetype = 'python',
+  })
+
+  local neighbor_snapshots = neighbors_context.get_context(current_bufnr)
+  assert(neighbor_snapshots and #neighbor_snapshots == 2, 'neighbors context should include the top configured number of files')
+  assert(neighbor_snapshots[1].filename == 'foo.js', 'neighbors context should prioritize imported files in the same directory')
+  assert(neighbor_snapshots[2].filename == 'util.js', 'neighbors context should rank same-directory same-filetype files ahead of unrelated buffers')
+
+  local original_get_parser = vim.treesitter.get_parser
+  local original_get_captures_at_pos = vim.treesitter.get_captures_at_pos
+
+  local function make_node(node_type, start_row, end_row, parent)
+    local node = {
+      _type = node_type,
+      _start_row = start_row,
+      _end_row = end_row,
+      _parent = parent,
+    }
+
+    function node:type()
+      return self._type
+    end
+
+    function node:range()
+      return self._start_row, 0, self._end_row, 0
+    end
+
+    function node:parent()
+      return self._parent
+    end
+
+    return node
+  end
+
+  local ts_bufnr = helpers.new_buffer({
+    'local function demo()',
+    '  return value',
+    'end',
+  }, {
+    filetype = 'lua',
+    row = 2,
+    col = 3,
+  })
+  local scope_node = make_node('function_declaration', 0, 2, nil)
+  local leaf_node = make_node('identifier', 1, 1, scope_node)
+  local root = {}
+
+  function root:named_descendant_for_range()
+    return leaf_node
+  end
+
+  vim.treesitter.get_parser = function()
+    return {
+      parse = function()
+        return {
+          {
+            root = function()
+              return root
+            end,
+          },
+        }
+      end,
+    }
+  end
+  vim.treesitter.get_captures_at_pos = function()
+    return {
+      { capture = 'comment' },
+      { capture = 'string' },
+    }
+  end
+
+  local ts_context = treesitter_context.get_context(ts_bufnr, { 2, 3 })
+  assert(ts_context and ts_context.node_type == 'identifier', 'Treesitter context should report the leaf node type')
+  assert(ts_context.in_comment and ts_context.in_string, 'Treesitter context should include semantic capture flags')
+  assert(#ts_context.scopes == 1, 'Treesitter context should collect scope ancestors')
+  assert(ts_context.scopes[1].header == 'local function demo()', 'Treesitter scope headers should use the first line of the scope node')
+
+  vim.treesitter.get_parser = original_get_parser
+  vim.treesitter.get_captures_at_pos = original_get_captures_at_pos
+
+  helpers.reset_runtime()
+end

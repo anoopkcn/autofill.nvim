@@ -28,6 +28,22 @@ function M.reset_runtime()
     pcall(cache.clear)
   end
 
+  local ok_lsp, lsp = pcall(require, 'autofill.context.lsp')
+  if ok_lsp then
+    pcall(lsp.stop)
+  end
+
+  local ok_neighbors, neighbors = pcall(require, 'autofill.context.neighbors')
+
+  for _, buf in ipairs(vim.fn.getbufinfo({ bufloaded = 1 })) do
+    if ok_lsp then
+      pcall(lsp.clear, buf.bufnr)
+    end
+    if ok_neighbors then
+      pcall(neighbors.clear, buf.bufnr)
+    end
+  end
+
   for _, lhs in ipairs(TEST_KEYS) do
     clear_mapping(lhs)
   end

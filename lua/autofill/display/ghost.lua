@@ -128,6 +128,49 @@ local function get_insert_mapping(lhs)
   return nil
 end
 
+local function clone_insert_mapping(mapping)
+  if not mapping then
+    return nil
+  end
+
+  return {
+    lhs = mapping.lhs,
+    rhs = mapping.rhs,
+    callback = mapping.callback,
+    expr = mapping.expr,
+    noremap = mapping.noremap,
+    nowait = mapping.nowait,
+    replace_keycodes = mapping.replace_keycodes,
+    silent = mapping.silent,
+    desc = mapping.desc,
+    buffer = mapping.buffer,
+  }
+end
+
+local function mapping_set_opts(mapping)
+  return {
+    expr = mapping.expr == 1,
+    noremap = mapping.noremap == 1,
+    nowait = mapping.nowait == 1,
+    replace_keycodes = mapping.replace_keycodes == 1,
+    silent = mapping.silent == 1,
+    desc = mapping.desc,
+  }
+end
+
+local function restore_insert_mapping(lhs, mapping)
+  if not lhs or not mapping then
+    return
+  end
+
+  local opts = mapping_set_opts(mapping)
+  if mapping.callback then
+    vim.keymap.set('i', lhs, mapping.callback, opts)
+  elseif mapping.rhs and mapping.rhs ~= '' then
+    vim.keymap.set('i', lhs, mapping.rhs, opts)
+  end
+end
+
 local function ensure_plug_keymaps()
   if plug_keymaps_installed then return end
 
@@ -156,14 +199,7 @@ local function install_fallback_keymap(name, mapping)
 
   delete_insert_mapping(plug)
 
-  local opts = {
-    expr = mapping.expr == 1,
-    noremap = mapping.noremap == 1,
-    nowait = mapping.nowait == 1,
-    replace_keycodes = mapping.replace_keycodes == 1,
-    silent = mapping.silent == 1,
-    desc = mapping.desc,
-  }
+  local opts = mapping_set_opts(mapping)
 
   if mapping.callback then
     vim.keymap.set('i', plug, mapping.callback, opts)
@@ -214,6 +250,7 @@ local function install_direct_keymap(name, lhs)
   direct_keymaps[name] = {
     lhs = lhs,
     fallback = fallback,
+    original = clone_insert_mapping(existing),
   }
 end
 
@@ -394,6 +431,7 @@ function M.teardown_keymaps(opts)
       if mapping then
         delete_insert_mapping(mapping.lhs)
         delete_insert_mapping(mapping.fallback)
+        restore_insert_mapping(mapping.lhs, mapping.original)
       end
       direct_keymaps[name] = nil
     end
