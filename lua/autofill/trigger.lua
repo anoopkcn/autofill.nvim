@@ -1,52 +1,128 @@
 local ghost = require('autofill.display.ghost')
 local context = require('autofill.context')
+local buffer_context = require('autofill.context.buffer')
 local backend = require('autofill.backend')
 local request = require('autofill.transport.request')
 local cache = require('autofill.cache')
+local profiler = require('autofill.profiler')
 local util = require('autofill.util')
 
 local M = {}
 
 local timer = nil
 local last_request_time = 0
+local last_input_time = 0
 local augroup = nil
+local change_seq = 0
+local pending_snapshot = nil
+local active_request_seq = 0
 
-local function show_suggestion(bufnr, suggestion, is_partial)
-  if vim.fn.mode() ~= 'i' then return end
-  if vim.api.nvim_get_current_buf() ~= bufnr then return end
+local PARTIAL_IDLE_MS = 75
 
-  local new_cursor = vim.api.nvim_win_get_cursor(0)
-  ghost.show(bufnr, new_cursor[1], new_cursor[2], suggestion, is_partial)
+local function clone_cursor(cursor)
+  return { cursor[1], cursor[2] }
 end
 
-local function do_complete()
-  local config = require('autofill.config').get()
-  local bufnr = vim.api.nvim_get_current_buf()
+local function same_cursor(a, b)
+  return a and b and a[1] == b[1] and a[2] == b[2]
+end
+
+local function make_snapshot(bufnr, cursor, seq, profile)
+  return {
+    bufnr = bufnr,
+    cursor = clone_cursor(cursor),
+    changedtick = vim.api.nvim_buf_get_changedtick(bufnr),
+    seq = seq,
+    profile = profile,
+  }
+end
+
+local function snapshot_is_current(snapshot)
+  if not snapshot or not augroup then return false end
+  if vim.fn.mode() ~= 'i' then return false end
+  if snapshot.seq ~= change_seq then return false end
+  if not vim.api.nvim_buf_is_valid(snapshot.bufnr) then return false end
+  if vim.api.nvim_get_current_buf() ~= snapshot.bufnr then return false end
+  if vim.api.nvim_buf_get_changedtick(snapshot.bufnr) ~= snapshot.changedtick then
+    return false
+  end
+
   local cursor = vim.api.nvim_win_get_cursor(0)
+  return same_cursor(cursor, snapshot.cursor)
+end
 
-  local ctx = context.gather(bufnr, cursor)
+local function finalize_profile(snapshot)
+  profiler.mark(snapshot.profile, 'final_render')
+  profiler.finish(snapshot.profile)
+end
+
+local function show_suggestion(snapshot, suggestion, is_partial)
+  if not snapshot_is_current(snapshot) then return false end
+
+  local new_cursor = vim.api.nvim_win_get_cursor(0)
+  ghost.show(snapshot.bufnr, new_cursor[1], new_cursor[2], suggestion, is_partial)
+
+  if not is_partial then
+    finalize_profile(snapshot)
+  end
+
+  return true
+end
+
+local function do_complete(snapshot)
+  local config = require('autofill.config').get()
+  if not snapshot_is_current(snapshot) then return end
+
+  profiler.mark(snapshot.profile, 'timer_fire')
+
+  local bufnr = snapshot.bufnr
+  local cursor = snapshot.cursor
+  local filetype = vim.bo[bufnr].filetype
+  local buf_ctx = buffer_context.get_text(bufnr, cursor)
+  local quick_key = cache.quick_key(filetype, buf_ctx.before, buf_ctx.after)
+
+  local quick_cached = cache.get_quick(quick_key)
+  if quick_cached then
+    profiler.mark(snapshot.profile, 'quick_cache_hit')
+    show_suggestion(snapshot, quick_cached, false)
+    return
+  end
+
+  local ctx = context.gather(bufnr, cursor, { buffer = buf_ctx })
+  profiler.mark(snapshot.profile, 'context_ready')
+
   local cache_key = cache.key(ctx)
-
-  -- Check cache first
   local cached = cache.get(cache_key)
   if cached then
-    show_suggestion(bufnr, cached)
+    cache.set_quick(quick_key, cached)
+    show_suggestion(snapshot, cached, false)
     return
   end
 
   last_request_time = vim.uv.now()
+  active_request_seq = snapshot.seq
+  profiler.mark(snapshot.profile, 'request_sent')
 
   local opts = {
     on_complete = function(suggestion)
+      if active_request_seq == snapshot.seq then
+        active_request_seq = 0
+      end
+      if not snapshot_is_current(snapshot) then return end
       cache.set(cache_key, suggestion)
-      show_suggestion(bufnr, suggestion)
+      cache.set_quick(quick_key, suggestion)
+      show_suggestion(snapshot, suggestion, false)
     end,
   }
 
   if config.streaming_display then
     opts.on_partial = function(text_so_far)
+      if not snapshot_is_current(snapshot) then return end
+      if vim.uv.now() - last_input_time < PARTIAL_IDLE_MS then return end
+
+      profiler.mark(snapshot.profile, 'first_partial')
       vim.schedule(function()
-        show_suggestion(bufnr, text_so_far, true)
+        show_suggestion(snapshot, text_so_far, true)
       end)
     end
   end
@@ -55,6 +131,8 @@ local function do_complete()
 end
 
 local function schedule_complete()
+  if not pending_snapshot then return end
+
   local config = require('autofill.config').get()
   local now = vim.uv.now()
   local elapsed = now - last_request_time
@@ -77,8 +155,10 @@ local function schedule_complete()
 
   timer:start(delay, 0, vim.schedule_wrap(function()
     if not augroup then return end
-    if vim.fn.mode() == 'i' then
-      do_complete()
+    local snapshot = pending_snapshot
+    pending_snapshot = nil
+    if snapshot and vim.fn.mode() == 'i' then
+      do_complete(snapshot)
     end
   end))
 end
@@ -87,7 +167,6 @@ local function on_text_changed()
   if not require('autofill').is_enabled() then return end
 
   local config = require('autofill.config').get()
-
   local bufnr = vim.api.nvim_get_current_buf()
   local ft = vim.bo[bufnr].filetype
 
@@ -96,13 +175,20 @@ local function on_text_changed()
     if ft == excluded then return end
   end
 
+  last_input_time = vim.uv.now()
+  change_seq = change_seq + 1
+
   -- Try to advance existing ghost text
-  if ghost.is_visible() and ghost.advance(bufnr) then
-    return
+  if ghost.is_visible() then
+    ghost.advance(bufnr)
   end
 
-  -- Cancel any in-flight request
-  request.cancel()
+  pending_snapshot = make_snapshot(
+    bufnr,
+    vim.api.nvim_win_get_cursor(0),
+    change_seq,
+    profiler.start('completion')
+  )
 
   -- Schedule a new completion
   schedule_complete()
@@ -112,6 +198,8 @@ local function on_insert_leave()
   if timer then
     timer:stop()
   end
+  pending_snapshot = nil
+  active_request_seq = 0
   request.cancel()
   ghost.clear()
 end
@@ -120,6 +208,8 @@ local function on_buf_leave()
   if timer then
     timer:stop()
   end
+  pending_snapshot = nil
+  active_request_seq = 0
   request.cancel()
   ghost.clear()
 end
@@ -128,6 +218,7 @@ function M.start()
   if augroup then return end
 
   local lsp_mod = require('autofill.context.lsp')
+  local neighbors_mod = require('autofill.context.neighbors')
 
   augroup = vim.api.nvim_create_augroup('autofill_trigger', { clear = true })
 
@@ -154,11 +245,25 @@ function M.start()
     end,
   })
 
-  -- Clean up symbol cache on buffer delete
+  vim.api.nvim_create_autocmd({ 'BufEnter', 'DiagnosticChanged' }, {
+    group = augroup,
+    callback = function(ev)
+      lsp_mod.refresh_diagnostics(ev.buf)
+    end,
+  })
+
+  vim.api.nvim_create_autocmd({ 'BufAdd', 'BufDelete', 'BufEnter', 'BufFilePost', 'BufWipeout', 'FileType' }, {
+    group = augroup,
+    callback = function()
+      neighbors_mod.mark_candidates_dirty()
+    end,
+  })
+
   vim.api.nvim_create_autocmd({ 'BufDelete', 'BufWipeout' }, {
     group = augroup,
     callback = function(ev)
-      lsp_mod.clear_symbols(ev.buf)
+      lsp_mod.clear(ev.buf)
+      neighbors_mod.clear(ev.buf)
     end,
   })
 
@@ -175,6 +280,8 @@ function M.stop()
     timer:close()
     timer = nil
   end
+  pending_snapshot = nil
+  active_request_seq = 0
   request.cancel()
   ghost.clear()
   util.log('debug', 'Trigger system stopped')

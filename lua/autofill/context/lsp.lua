@@ -1,9 +1,8 @@
-local util = require('autofill.util')
-
 local M = {}
 
 -- Symbol cache keyed by bufnr
 local symbol_cache = {}
+local diagnostic_cache = {}
 
 local symbol_kind_names = {
   [1] = 'File', [2] = 'Module', [3] = 'Namespace', [4] = 'Package',
@@ -36,7 +35,10 @@ end
 
 function M.refresh_symbols(bufnr)
   local clients = vim.lsp.get_clients({ bufnr = bufnr, method = 'textDocument/documentSymbol' })
-  if #clients == 0 then return end
+  if #clients == 0 then
+    symbol_cache[bufnr] = nil
+    return
+  end
 
   local params = { textDocument = vim.lsp.util.make_text_document_params(bufnr) }
   vim.lsp.buf_request(bufnr, 'textDocument/documentSymbol', params, function(err, result)
@@ -49,18 +51,34 @@ function M.get_symbols(bufnr)
   return symbol_cache[bufnr]
 end
 
-function M.clear_symbols(bufnr)
-  symbol_cache[bufnr] = nil
+function M.refresh_diagnostics(bufnr)
+  if not bufnr or bufnr == 0 then return end
+  if not vim.api.nvim_buf_is_valid(bufnr) then return end
+
+  local diagnostics = vim.diagnostic.get(bufnr)
+  local normalized = {}
+  for _, d in ipairs(diagnostics) do
+    normalized[#normalized + 1] = {
+      line = d.lnum + 1,
+      lnum = d.lnum,
+      message = d.message,
+      severity = d.severity,
+    }
+  end
+
+  diagnostic_cache[bufnr] = normalized
 end
 
 function M.get_context(bufnr, cursor)
-  local clients = vim.lsp.get_clients({ bufnr = bufnr })
-  if #clients == 0 then
+  local row = cursor[1] - 1
+  local diagnostics = diagnostic_cache[bufnr]
+  if diagnostics == nil then
+    M.refresh_diagnostics(bufnr)
+    diagnostics = diagnostic_cache[bufnr]
+  end
+  if not diagnostics or #diagnostics == 0 then
     return nil
   end
-
-  local row = cursor[1] - 1
-  local diagnostics = vim.diagnostic.get(bufnr)
 
   -- Filter to +-10 lines of cursor, sort by proximity
   local nearby = {}
@@ -68,7 +86,7 @@ function M.get_context(bufnr, cursor)
     local dist = math.abs(d.lnum - row)
     if dist <= 10 then
       table.insert(nearby, {
-        line = d.lnum + 1,
+        line = d.line,
         message = d.message,
         severity = d.severity,
         distance = dist,
@@ -76,7 +94,12 @@ function M.get_context(bufnr, cursor)
     end
   end
 
-  table.sort(nearby, function(a, b) return a.distance < b.distance end)
+  table.sort(nearby, function(a, b)
+    if a.distance ~= b.distance then
+      return a.distance < b.distance
+    end
+    return a.line < b.line
+  end)
 
   -- Keep top 5
   local top_diags = {}
@@ -91,6 +114,11 @@ function M.get_context(bufnr, cursor)
   return {
     diagnostics = top_diags,
   }
+end
+
+function M.clear(bufnr)
+  symbol_cache[bufnr] = nil
+  diagnostic_cache[bufnr] = nil
 end
 
 return M

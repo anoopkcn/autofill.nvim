@@ -1,7 +1,9 @@
 local M = {}
 
-local cache = {}
-local order = {}
+local full_cache = {}
+local full_order = {}
+local quick_cache = {}
+local quick_order = {}
 local max_entries = 50
 local ttl_ms = 30000
 
@@ -12,6 +14,51 @@ local function hash(str)
     h = ((h * 33) + str:byte(i)) % 2147483647
   end
   return tostring(h)
+end
+
+local function get_entry(store, key)
+  local entry = store[key]
+  if not entry then return nil end
+
+  local now = vim.uv.now()
+  if now - entry.time > ttl_ms then
+    store[key] = nil
+    return nil
+  end
+
+  return entry.value
+end
+
+local function set_entry(store, order, key, value)
+  local now = vim.uv.now()
+  store[key] = { value = value, time = now }
+
+  for i = #order, 1, -1 do
+    if order[i] == key then
+      table.remove(order, i)
+      break
+    end
+  end
+  table.insert(order, key)
+
+  while #order > max_entries do
+    local oldest = table.remove(order, 1)
+    if store[oldest] then
+      store[oldest] = nil
+    end
+  end
+end
+
+local function build_quick_key(filetype, before_cursor, after_cursor)
+  local parts = {
+    filetype or '',
+    ':',
+    (before_cursor or ''):sub(-200),
+    ':',
+    (after_cursor or ''):sub(1, 100),
+  }
+
+  return hash(table.concat(parts))
 end
 
 function M.key(ctx)
@@ -54,44 +101,35 @@ function M.key(ctx)
   return hash(table.concat(parts))
 end
 
+function M.quick_key(filetype, before_cursor, after_cursor)
+  return build_quick_key(filetype, before_cursor, after_cursor)
+end
+
+function M.quick_key_from_context(ctx)
+  return build_quick_key(ctx.filetype, ctx.before_cursor, ctx.after_cursor)
+end
+
 function M.get(key)
-  local entry = cache[key]
-  if not entry then return nil end
+  return get_entry(full_cache, key)
+end
 
-  local now = vim.uv.now()
-  if now - entry.time > ttl_ms then
-    cache[key] = nil
-    return nil
-  end
-
-  return entry.value
+function M.get_quick(key)
+  return get_entry(quick_cache, key)
 end
 
 function M.set(key, value)
-  local now = vim.uv.now()
-  cache[key] = { value = value, time = now }
+  set_entry(full_cache, full_order, key, value)
+end
 
-  -- Remove existing key to avoid duplicates in order list
-  for i = #order, 1, -1 do
-    if order[i] == key then
-      table.remove(order, i)
-      break
-    end
-  end
-  table.insert(order, key)
-
-  -- Evict oldest if over limit
-  while #order > max_entries do
-    local oldest = table.remove(order, 1)
-    if cache[oldest] then
-      cache[oldest] = nil
-    end
-  end
+function M.set_quick(key, value)
+  set_entry(quick_cache, quick_order, key, value)
 end
 
 function M.clear()
-  cache = {}
-  order = {}
+  full_cache = {}
+  full_order = {}
+  quick_cache = {}
+  quick_order = {}
 end
 
 return M

@@ -9,7 +9,7 @@ local state = {
   extmark_id = nil,
 }
 local last_render_time = 0
-local THROTTLE_MS = 50
+local THROTTLE_MS = 75
 
 function M.is_visible()
   return state.text ~= nil
@@ -21,6 +21,9 @@ end
 
 function M.show(bufnr, line, col, text, is_partial)
   if not text or text == '' then return end
+  if state.bufnr == bufnr and state.line == line and state.col == col and state.text == text then
+    return
+  end
 
   -- Throttle partial (streaming) renders to avoid flicker
   if is_partial then
@@ -160,6 +163,7 @@ function M.advance(bufnr)
     -- Clear old extmark and render new one
     vim.api.nvim_buf_clear_namespace(bufnr, ns, 0, -1)
     M._render()
+    last_render_time = vim.uv.now()
     return true
   end
 

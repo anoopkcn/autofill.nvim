@@ -2,6 +2,13 @@ local M = {}
 
 M.SYSTEM_PROMPT = [[You are a code completion engine. Output ONLY the completion text that should be inserted at the cursor position. Do not include any explanation, markdown formatting, or code fences. Do not repeat the text before the cursor. Output only the new text to be inserted.]]
 
+local function trim_text(text, max_chars)
+  if not text or #text <= max_chars then
+    return text
+  end
+  return text:sub(1, max_chars) .. '...'
+end
+
 function M.build_user_message(ctx)
   local parts = {}
 
@@ -22,7 +29,7 @@ function M.build_user_message(ctx)
   if ctx.lsp and ctx.lsp.symbols and #ctx.lsp.symbols > 0 then
     table.insert(parts, '')
     table.insert(parts, 'File outline:')
-    local count = math.min(30, #ctx.lsp.symbols)
+    local count = math.min(15, #ctx.lsp.symbols)
     for i = 1, count do
       local sym = ctx.lsp.symbols[i]
       local entry = '  ' .. sym.kind .. ' ' .. sym.name .. ' (line ' .. sym.line .. ')'
@@ -57,7 +64,7 @@ function M.build_user_message(ctx)
       table.insert(parts, 'Nearby diagnostics:')
       for _, d in ipairs(lsp_ctx.diagnostics) do
         local sev = ({ 'ERROR', 'WARN', 'INFO', 'HINT' })[d.severity] or 'INFO'
-        table.insert(parts, '  Line ' .. d.line .. ' [' .. sev .. ']: ' .. d.message)
+        table.insert(parts, '  Line ' .. d.line .. ' [' .. sev .. ']: ' .. trim_text(d.message, 120))
       end
     end
   end

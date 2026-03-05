@@ -18,8 +18,8 @@ local function is_scope_node(node_type)
 end
 
 local function get_node_header(node, source, max_chars)
-  max_chars = max_chars or 500
-  local sr, sc, er, ec = node:range()
+  max_chars = max_chars or 200
+  local sr, _, er = node:range()
   local lines = vim.api.nvim_buf_get_lines(source, sr, er + 1, false)
   if #lines == 0 then return nil end
   -- Take just the first line (the signature/declaration)

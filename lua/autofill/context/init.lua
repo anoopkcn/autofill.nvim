@@ -5,8 +5,10 @@ local neighbors = require('autofill.context.neighbors')
 
 local M = {}
 
-function M.gather(bufnr, cursor)
-  local buf_ctx = buffer.get_text(bufnr, cursor)
+function M.gather(bufnr, cursor, opts)
+  opts = opts or {}
+
+  local buf_ctx = opts.buffer or buffer.get_text(bufnr, cursor)
   local ts_ctx = treesitter.get_context(bufnr, cursor)
   local lsp_ctx = lsp.get_context(bufnr, cursor)
 
