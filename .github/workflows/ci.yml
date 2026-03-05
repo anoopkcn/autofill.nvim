@@ -1,0 +1,30 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check Out Repository
+        uses: actions/checkout@v4
+
+      - name: Install Lua
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y lua5.1
+
+      - name: Install Neovim
+        run: |
+          curl -L -o nvim-linux-x86_64.tar.gz https://github.com/neovim/neovim/releases/download/stable/nvim-linux-x86_64.tar.gz
+          tar xzf nvim-linux-x86_64.tar.gz
+          echo "$PWD/nvim-linux-x86_64/bin" >> "$GITHUB_PATH"
+
+      - name: Check Lua Syntax
+        run: find lua plugin tests -name '*.lua' -print0 | xargs -0 -n1 luac5.1 -p
+
+      - name: Run Headless Tests
+        run: XDG_STATE_HOME=/tmp nvim --headless -u NONE -i NONE "+set rtp+=." "+lua require('tests.run').run()" +qa!
