@@ -96,6 +96,20 @@ return function()
   config.setup({
     enabled = false,
   })
+  local treesitter_enabled_scope = cache.scope(config.get())
+
+  config.setup({
+    enabled = false,
+    treesitter = {
+      enabled = false,
+    },
+  })
+  local treesitter_disabled_scope = cache.scope(config.get())
+  assert(treesitter_enabled_scope ~= treesitter_disabled_scope, 'cache scope should change when Treesitter context is toggled')
+
+  config.setup({
+    enabled = false,
+  })
   local lsp_disabled_scope = cache.scope(config.get())
 
   config.setup({

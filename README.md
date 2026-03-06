@@ -19,7 +19,7 @@ AI-assisted ghost-text autocompletion for Neovim.
 - Neovim `0.10+`
 - `curl`
 - An API key for the backend you configure
-- Treesitter is optional, and LSP context is available as an opt-in config toggle
+- Treesitter context is enabled by default and can be disabled; LSP context is available as an opt-in config toggle
 
 ## Supported Backends
 
@@ -117,6 +117,9 @@ require("autofill").setup({
     budget = 2000,
     max_files = 2,
   },
+  treesitter = {
+    enabled = true,
+  },
   lsp = {
     enabled = false,
   },
@@ -159,8 +162,19 @@ Important options:
 - `neighbors.enabled`: include nearby file snapshots in the prompt
 - `neighbors.budget`: total neighbor-context character budget
 - `neighbors.max_files`: maximum number of neighbor files included
+- `treesitter.enabled`: include Treesitter-derived scope and semantic context in the prompt
 - `lsp.enabled`: include LSP document symbols and nearby diagnostics in the prompt
 - `blablador.base_url`: override the OpenAI-compatible Blablador API root when needed
+
+Disable Treesitter-backed context if you want prompt construction to rely only on buffer, neighbors, and any explicitly enabled LSP data:
+
+```lua
+require("autofill").setup({
+  treesitter = {
+    enabled = false,
+  },
+})
+```
 
 Enable LSP-backed context explicitly if you want the previous behavior:
 

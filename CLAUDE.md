@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What This Is
 
-A Neovim plugin (Lua) that provides AI ghost-text autocompletion in insert mode. It watches typing via `TextChangedI`, builds a prompt from buffer text + optional context (treesitter, neighbor files, and opt-in LSP data), sends it to a configurable AI backend, and renders the response as inline ghost text using extmarks. Targets Neovim >= 0.10. No external Lua dependencies.
+A Neovim plugin (Lua) that provides AI ghost-text autocompletion in insert mode. It watches typing via `TextChangedI`, builds a prompt from buffer text + optional context (Treesitter, neighbor files, and opt-in LSP data), sends it to a configurable AI backend, and renders the response as inline ghost text using extmarks. Targets Neovim >= 0.10. No external Lua dependencies.
 
 ## Commands
 
@@ -30,7 +30,7 @@ CI (`.github/workflows/ci.yml`) runs both the syntax check and headless tests on
 
 2. **Cache** (`cache.lua`) — Two-tier LRU: a "quick cache" keyed on buffer position + context revision (cheap to compute), and a "full cache" keyed on the actual prompt hash. Both have 50-entry limit and 30s TTL.
 
-3. **Context** (`context/`) — Provider-based system via `context/registry.lua`. Four built-in providers run in order: buffer, treesitter, lsp, neighbors. The LSP provider is disabled by default and only contributes when `lsp.enabled = true`. Each provider has `collect()` and optional `revision()`. The registry collects all provider data into a single context object.
+3. **Context** (`context/`) — Provider-based system via `context/registry.lua`. Four built-in providers run in order: buffer, treesitter, lsp, neighbors. Treesitter is enabled by default but can be disabled with `treesitter.enabled = false`. The LSP provider is disabled by default and only contributes when `lsp.enabled = true`. Each provider has `collect()` and optional `revision()`. The registry collects all provider data into a single context object.
 
 4. **Prompt** (`backend/prompt.lua`) — Shared across all backends. Builds a user message from context with budget-aware section fitting (neighbors, outline, scopes, diagnostics, cursor text). Sections are added greedily up to `prompt.max_chars`.
 

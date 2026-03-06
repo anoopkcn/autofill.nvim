@@ -7,6 +7,11 @@ local util = require('autofill.util')
 
 local M = {}
 
+local function treesitter_enabled()
+  local treesitter_config = config.get().treesitter or {}
+  return treesitter_config.enabled ~= false
+end
+
 local function lsp_enabled()
   local lsp_config = config.get().lsp or {}
   return lsp_config.enabled == true
@@ -27,6 +32,9 @@ local builtin_providers = {
   },
   {
     name = 'treesitter',
+    enabled = function()
+      return treesitter_enabled()
+    end,
     collect = function(bufnr, cursor)
       return treesitter.get_context(bufnr, cursor)
     end,

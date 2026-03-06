@@ -76,10 +76,21 @@ return function()
   assert(vim.deep_equal(gathered.provider_order, registry.builtin_order()), 'gather should preserve builtin provider order')
   assert(gathered.providers.buffer.before == 'local ', 'gather should expose buffer provider output')
   assert(gathered.before_cursor == 'local ', 'gather should preserve legacy top-level buffer fields')
+  assert(gathered.treesitter and gathered.treesitter.scopes and gathered.treesitter.scopes[1].header == 'local function demo()', 'gather should preserve Treesitter provider output by default')
   assert(gathered.lsp == nil, 'gather should omit LSP provider output when LSP context is disabled')
   assert(gathered.neighbors == nil, 'gather should skip empty provider results')
   assert(gathered.revisions.lsp == 'off', 'gather should expose disabled LSP revisions when LSP context is off')
   assert(context.get_revision(bufnr, { 1, 6 }) == 'lsp=off\0neighbors=imports=foo', 'context should compose disabled-provider revisions deterministically')
+
+  config.setup({
+    enabled = false,
+    treesitter = {
+      enabled = false,
+    },
+  })
+
+  gathered = context.gather(bufnr, { 1, 6 })
+  assert(gathered.treesitter == nil, 'gather should omit Treesitter provider output when Treesitter context is disabled')
 
   config.setup({
     enabled = false,

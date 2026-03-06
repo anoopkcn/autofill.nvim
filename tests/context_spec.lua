@@ -112,6 +112,24 @@ return function()
   config.setup({
     context_window = 200,
     context_ratio = 0.5,
+    treesitter = {
+      enabled = false,
+    },
+  })
+
+  gathered = context.gather(gather_bufnr, { 1, 16 })
+  message = prompt.build_user_message(gathered)
+  assert(gathered.providers.treesitter == nil, 'gather should omit disabled Treesitter provider output')
+  assert(gathered.treesitter == nil, 'gather should preserve absent legacy Treesitter fields when disabled')
+  assert(not message:find('Scope chain:', 1, true), 'prompt should omit Treesitter scopes when Treesitter context is disabled')
+  assert(not message:find('Cursor is inside a string.', 1, true), 'prompt should omit Treesitter semantic hints when Treesitter context is disabled')
+  related_pos = assert(message:find('Related files:', 1, true))
+  cursor_pos = assert(message:find('local example = <CURSOR>', 1, true))
+  assert(related_pos < cursor_pos, 'prompt should preserve section ordering when Treesitter context is disabled')
+
+  config.setup({
+    context_window = 200,
+    context_ratio = 0.5,
     lsp = {
       enabled = true,
     },

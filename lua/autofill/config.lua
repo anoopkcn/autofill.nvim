@@ -53,6 +53,9 @@ M.defaults = {
     include_disk_files = true,
     disk_scan_limit = 32,
   },
+  treesitter = {
+    enabled = true,
+  },
   lsp = {
     enabled = false,
   },
@@ -204,6 +207,14 @@ function M.inspect(options)
     end
     if not is_positive_integer(options.neighbors.disk_scan_limit) then
       errors[#errors + 1] = 'neighbors.disk_scan_limit must be a positive integer'
+    end
+  end
+
+  if type(options.treesitter) ~= 'table' then
+    errors[#errors + 1] = 'treesitter must be a table'
+  else
+    if type(options.treesitter.enabled) ~= 'boolean' then
+      errors[#errors + 1] = 'treesitter.enabled must be a boolean'
     end
   end
 
