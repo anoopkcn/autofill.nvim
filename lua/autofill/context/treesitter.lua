@@ -2,6 +2,7 @@ local util = require('autofill.util')
 
 local M = {}
 
+local ts_cache = {}
 local scope_patterns = { 'function', 'method', 'class', 'module', 'struct', 'impl', 'interface' }
 
 local function is_scope_node(node_type)
@@ -31,6 +32,14 @@ local function get_node_header(node, source, max_chars)
 end
 
 function M.get_context(bufnr, cursor)
+  local row = cursor[1]
+  local changedtick = vim.api.nvim_buf_get_changedtick(bufnr)
+  local cache_key = bufnr .. ':' .. changedtick .. ':' .. row
+  local cached = ts_cache[bufnr]
+  if cached and cached.key == cache_key then
+    return cached.result
+  end
+
   local ok, parser = pcall(vim.treesitter.get_parser, bufnr)
   if not ok or not parser then
     util.log('debug', 'Treesitter parser not available')
@@ -43,9 +52,9 @@ function M.get_context(bufnr, cursor)
   end
 
   local root = trees[1]:root()
-  local row, col = cursor[1] - 1, cursor[2]
+  local ts_row, col = row - 1, cursor[2]
 
-  local node = root:named_descendant_for_range(row, col, row, col)
+  local node = root:named_descendant_for_range(ts_row, col, ts_row, col)
   if not node then return nil end
 
   local scopes = {}
@@ -70,7 +79,7 @@ function M.get_context(bufnr, cursor)
   -- Check captures at cursor for semantic context
   local in_comment = false
   local in_string = false
-  local ok3, captures = pcall(vim.treesitter.get_captures_at_pos, bufnr, row, col)
+  local ok3, captures = pcall(vim.treesitter.get_captures_at_pos, bufnr, ts_row, col)
   if ok3 and captures then
     for _, cap in ipairs(captures) do
       if cap.capture == 'comment' then in_comment = true end
@@ -78,12 +87,23 @@ function M.get_context(bufnr, cursor)
     end
   end
 
-  return {
+  local result = {
     scopes = scopes,
     node_type = node_type,
     in_comment = in_comment,
     in_string = in_string,
   }
+
+  ts_cache[bufnr] = { key = cache_key, result = result }
+  return result
+end
+
+function M.clear(bufnr)
+  if bufnr then
+    ts_cache[bufnr] = nil
+  else
+    ts_cache = {}
+  end
 end
 
 return M

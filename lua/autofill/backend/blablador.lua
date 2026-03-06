@@ -10,12 +10,21 @@ local function trim_result(text)
   return (text or ''):gsub('^%s*\n', '')
 end
 
+local function get_text(state)
+  if state.dirty then
+    state.text = table.concat(state.parts)
+    state.dirty = false
+  end
+  return state.text
+end
+
 local function append_result(state, chunk, on_partial)
   if not chunk or chunk == '' then return end
 
-  state.text = state.text .. chunk
+  state.parts[#state.parts + 1] = chunk
+  state.dirty = true
   if on_partial then
-    local partial = trim_result(state.text)
+    local partial = trim_result(get_text(state))
     if partial ~= '' then
       on_partial(partial)
     end
@@ -112,7 +121,7 @@ function M.complete(ctx, opts)
   util.log('debug', 'Blablador prompt prepared (' .. #user_message .. ' chars)')
 
   local use_stream = config.streaming_display
-  local state = { text = '' }
+  local state = { parts = {}, text = '', dirty = false }
   local on_partial = opts.on_partial
 
   request.send({
@@ -140,10 +149,11 @@ function M.complete(ctx, opts)
   }, function(response)
     local body = response and response.body or ''
     if not use_stream and body ~= '' then
-      state.text = state.text .. extract_response_text(body)
+      state.parts[#state.parts + 1] = extract_response_text(body)
+      state.dirty = true
     end
 
-    local result = trim_result(state.text)
+    local result = trim_result(get_text(state))
 
     if result ~= '' then
       util.log('debug', 'Blablador response received (' .. #result .. ' chars)')

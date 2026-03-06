@@ -44,4 +44,9 @@ function M.get_revision(bufnr, cursor, opts)
   return registry.compose_revision(revisions, provider_order)
 end
 
+function M.get_quick_revision(bufnr, cursor, opts)
+  local collected = registry.collect_quick_revisions(bufnr, cursor, opts)
+  return registry.compose_revision(collected.revisions, collected.provider_order)
+end
+
 return M

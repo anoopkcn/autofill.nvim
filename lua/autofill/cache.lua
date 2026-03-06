@@ -8,9 +8,14 @@ local quick_cache = {}
 local quick_order = {}
 local max_entries = 50
 local ttl_ms = 30000
+local cached_scope = nil
+local cached_scope_config = nil
 
 local function hash(str)
-  -- Simple djb2 hash
+  if #str > 256 then
+    return vim.fn.sha256(str)
+  end
+  -- Simple djb2 hash for short strings
   local h = 5381
   for i = 1, #str do
     h = ((h * 33) + str:byte(i)) % 2147483647
@@ -77,6 +82,10 @@ local function build_quick_key(opts)
 end
 
 function M.scope(config)
+  if config == cached_scope_config then
+    return cached_scope
+  end
+
   local backend_name = config.backend or ''
   local backend_opts = config[backend_name] or {}
   local neighbors = config.neighbors or {}
@@ -124,7 +133,10 @@ function M.scope(config)
     tostring(prompt_config.max_diagnostic_count or ''),
   }
 
-  return hash(table.concat(parts))
+  local result = hash(table.concat(parts))
+  cached_scope_config = config
+  cached_scope = result
+  return result
 end
 
 function M.key(ctx, scope)
@@ -168,6 +180,8 @@ function M.clear()
   full_order = {}
   quick_cache = {}
   quick_order = {}
+  cached_scope = nil
+  cached_scope_config = nil
 end
 
 return M

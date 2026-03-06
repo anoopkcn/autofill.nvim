@@ -3,6 +3,7 @@ local context = require('autofill.context')
 local buffer_context = require('autofill.context.buffer')
 local lsp_context = require('autofill.context.lsp')
 local neighbors_context = require('autofill.context.neighbors')
+local treesitter_context = require('autofill.context.treesitter')
 local backend = require('autofill.backend')
 local request = require('autofill.transport.request')
 local cache = require('autofill.cache')
@@ -115,7 +116,7 @@ local function do_complete(snapshot)
     bufnr = bufnr,
     row = cursor[1],
     filetype = filetype,
-    context_revision = context.get_revision(bufnr, cursor, { buffer = buf_ctx }),
+    context_revision = context.get_quick_revision(bufnr, cursor, { buffer = buf_ctx }),
     before_cursor = buf_ctx.before,
     after_cursor = buf_ctx.after,
   })
@@ -157,11 +158,13 @@ local function do_complete(snapshot)
   }
 
   if config.streaming_display then
+    local first_partial = true
     opts.on_partial = function(text_so_far)
       if get_session(bufnr) ~= session then return end
       if not snapshot_is_current(snapshot) then return end
-      if vim.uv.now() - session.last_input_time < PARTIAL_IDLE_MS then return end
+      if not first_partial and vim.uv.now() - session.last_input_time < PARTIAL_IDLE_MS then return end
 
+      first_partial = false
       profiler.mark(snapshot.profile, 'first_partial')
       vim.schedule(function()
         show_suggestion(snapshot, text_so_far, true)
@@ -337,6 +340,7 @@ function M.start()
       stop_buffer_session(ev.buf, { clear_cache = true })
       lsp_context.clear(ev.buf)
       neighbors_context.clear(ev.buf)
+      treesitter_context.clear(ev.buf)
     end,
   })
 

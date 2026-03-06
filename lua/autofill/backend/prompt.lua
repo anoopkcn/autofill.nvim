@@ -272,43 +272,43 @@ function M.build_user_message(ctx)
 
   local sections = build_section_entries(ctx, prompt_config)
 
-  local prefix_sections = {}
+  local final_parts = {}
   local optional_sections = {}
   local cursor_section = ''
+  local running_len = 0
+  local separator_len = 2  -- '\n\n' between sections
 
   for _, section in ipairs(sections) do
     if section.text and section.text ~= '' then
       if section.id == 'cursor' then
         cursor_section = section.text
       elseif section.required then
-        prefix_sections[#prefix_sections + 1] = section.text
+        if running_len > 0 then
+          running_len = running_len + separator_len
+        end
+        final_parts[#final_parts + 1] = section.text
+        running_len = running_len + #section.text
       else
         optional_sections[#optional_sections + 1] = section.text
       end
     end
   end
 
-  local function render_with(optional)
-    local sections = vim.list_extend(vim.deepcopy(prefix_sections), optional)
-    sections[#sections + 1] = cursor_section
-    return join_sections(sections)
-  end
-
-  local selected_sections = {}
   for _, section in ipairs(optional_sections) do
-    if section then
-      local base_message = render_with(selected_sections)
-      local remaining = prompt_config.max_chars - #base_message
-      if remaining > 2 then
-        local fitted = fit_section_text(section, remaining - 2)
-        if fitted and fitted ~= '' then
-          selected_sections[#selected_sections + 1] = fitted
-        end
+    -- Account for two separators: one before this section and one before cursor
+    local base_len = running_len + separator_len + #cursor_section + separator_len
+    local remaining = prompt_config.max_chars - base_len
+    if remaining > 2 then
+      local fitted = fit_section_text(section, remaining - separator_len)
+      if fitted and fitted ~= '' then
+        final_parts[#final_parts + 1] = fitted
+        running_len = running_len + separator_len + #fitted
       end
     end
   end
 
-  ctx._user_message = render_with(selected_sections)
+  final_parts[#final_parts + 1] = cursor_section
+  ctx._user_message = join_sections(final_parts)
   return ctx._user_message
 end
 

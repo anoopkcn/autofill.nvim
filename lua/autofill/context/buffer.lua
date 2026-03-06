@@ -2,19 +2,7 @@ local utf8 = require('autofill.utf8')
 
 local M = {}
 
-local function estimate_avg_line_len(bufnr, row, total_lines)
-  local sample_start = math.max(0, row - 11)
-  local sample_end = math.min(total_lines, row + 10)
-  local lines = vim.api.nvim_buf_get_lines(bufnr, sample_start, sample_end, false)
-  if #lines == 0 then return 80 end
-
-  local total_chars = 0
-  for _, line in ipairs(lines) do
-    total_chars = total_chars + #line + 1 -- +1 for newline
-  end
-  local avg = total_chars / #lines
-  return math.max(20, avg)
-end
+local AVG_LINE_ESTIMATE = 40
 
 function M.get_text(bufnr, cursor)
   local config = require('autofill.config').get()
@@ -26,10 +14,9 @@ function M.get_text(bufnr, cursor)
   local row, col = cursor[1], cursor[2]
   local total_lines = vim.api.nvim_buf_line_count(bufnr)
 
-  -- Sample nearby lines for adaptive average, with 1.5x safety margin
-  local avg_line_len = estimate_avg_line_len(bufnr, row, total_lines)
-  local before_lines_needed = math.ceil(before_budget / avg_line_len * 1.5) + 1
-  local after_lines_needed = math.ceil(after_budget / avg_line_len * 1.5) + 1
+  -- Conservative estimate with 2x margin to avoid under-fetching
+  local before_lines_needed = math.ceil(before_budget / AVG_LINE_ESTIMATE * 2) + 1
+  local after_lines_needed = math.ceil(after_budget / AVG_LINE_ESTIMATE * 2) + 1
 
   local before_start = math.max(0, row - 1 - before_lines_needed)
   local after_end = math.min(total_lines, row + after_lines_needed)

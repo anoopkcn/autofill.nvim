@@ -72,13 +72,12 @@ function M._parse_error(raw)
   return first_line:sub(1, 200)
 end
 
-local function normalize_sse_buffer(raw)
-  if not raw or raw == '' then
+local function normalize_sse_chunk(data)
+  if not data or data == '' then
     return ''
   end
-
-  raw = raw:gsub('\r\n', '\n')
-  return raw:gsub('\r', '\n')
+  data = data:gsub('\r\n', '\n')
+  return data:gsub('\r', '\n')
 end
 
 local function parse_sse_event(block)
@@ -116,17 +115,16 @@ local function parse_sse_event(block)
   return event
 end
 
-local function flush_sse_events(buffer, opts)
+local function flush_sse_events(buffer_str, opts)
   opts = opts or {}
-  buffer = normalize_sse_buffer(buffer)
 
   local event_count = 0
   while true do
-    local sep_start, sep_end = buffer:find('\n\n', 1, true)
+    local sep_start, sep_end = buffer_str:find('\n\n', 1, true)
     if not sep_start then break end
 
-    local block = buffer:sub(1, sep_start - 1)
-    buffer = buffer:sub(sep_end + 1)
+    local block = buffer_str:sub(1, sep_start - 1)
+    buffer_str = buffer_str:sub(sep_end + 1)
 
     local event = parse_sse_event(block)
     if event then
@@ -137,9 +135,9 @@ local function flush_sse_events(buffer, opts)
     end
   end
 
-  if opts.final and buffer ~= '' then
-    local event = parse_sse_event(buffer)
-    buffer = ''
+  if opts.final and buffer_str ~= '' then
+    local event = parse_sse_event(buffer_str)
+    buffer_str = ''
     if event then
       event_count = event_count + 1
       if opts.on_event then
@@ -148,7 +146,7 @@ local function flush_sse_events(buffer, opts)
     end
   end
 
-  return buffer, event_count
+  return buffer_str, event_count
 end
 
 function M.request(opts)
@@ -189,7 +187,8 @@ function M.request(opts)
 
   table.insert(args, url)
 
-  local stdout_buf = ''
+  local sse_buf_parts = {}
+  local sse_buf_str = ''
   local raw_chunks = {}
   local got_sse = false
   local stream_error = nil
@@ -212,8 +211,19 @@ function M.request(opts)
       end
       if not data then return end
       table.insert(raw_chunks, data)
-      stdout_buf = stdout_buf .. data
-      stdout_buf = flush_sse_events(stdout_buf, { on_event = handle_sse_event })
+      local normalized = normalize_sse_chunk(data)
+      if normalized:find('\n\n', 1, true) then
+        sse_buf_parts[#sse_buf_parts + 1] = normalized
+        sse_buf_str = table.concat(sse_buf_parts)
+        sse_buf_parts = {}
+        sse_buf_str = flush_sse_events(sse_buf_str, { on_event = handle_sse_event })
+        if sse_buf_str ~= '' then
+          sse_buf_parts[1] = sse_buf_str
+          sse_buf_str = ''
+        end
+      else
+        sse_buf_parts[#sse_buf_parts + 1] = normalized
+      end
     end
   end
 
@@ -224,8 +234,12 @@ function M.request(opts)
       output, local_status = split_http_output(output)
 
       if stream then
+        if #sse_buf_parts > 0 then
+          sse_buf_str = table.concat(sse_buf_parts)
+          sse_buf_parts = {}
+        end
         local flushed_events
-        stdout_buf, flushed_events = flush_sse_events(split_http_output(stdout_buf), {
+        sse_buf_str, flushed_events = flush_sse_events(split_http_output(sse_buf_str), {
           final = true,
           on_event = handle_sse_event,
         })

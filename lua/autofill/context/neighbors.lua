@@ -686,6 +686,35 @@ function M.get_revision(bufnr)
   })
 end
 
+function M.get_quick_revision(bufnr)
+  local _, import_signature = get_import_names(bufnr)
+
+  local parts = {
+    'gen=',
+    tostring(candidate_generation),
+    ':imports=',
+    import_signature or '',
+  }
+
+  local cached = candidate_cache[bufnr]
+  if cached and cached.candidates then
+    local config = require('autofill.config').get()
+    local nb_config = config.neighbors or {}
+    local max_files = nb_config.max_files or 2
+    for i = 1, math.min(max_files, #cached.candidates) do
+      local candidate = cached.candidates[i]
+      if candidate.kind == 'buffer' and candidate.bufnr then
+        parts[#parts + 1] = ':'
+        parts[#parts + 1] = candidate.path or ''
+        parts[#parts + 1] = '='
+        parts[#parts + 1] = tostring(get_changedtick(candidate.bufnr))
+      end
+    end
+  end
+
+  return table.concat(parts)
+end
+
 function M.mark_candidates_dirty()
   candidate_generation = candidate_generation + 1
 end

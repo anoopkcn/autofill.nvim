@@ -48,6 +48,9 @@ local builtin_providers = {
     revision = function(bufnr)
       return neighbors.get_revision(bufnr)
     end,
+    quick_revision = function(bufnr)
+      return neighbors.get_quick_revision(bufnr)
+    end,
   },
 }
 
@@ -81,6 +84,17 @@ local function safe_revision(provider, bufnr, cursor, opts)
   end
 
   return tostring(result or '')
+end
+
+local function safe_quick_revision(provider, bufnr, cursor, opts)
+  if type(provider.quick_revision) == 'function' then
+    local ok, result = pcall(provider.quick_revision, bufnr, cursor, opts or {})
+    if ok then
+      return tostring(result or '')
+    end
+    provider_error(provider, 'quick_revision', result)
+  end
+  return safe_revision(provider, bufnr, cursor, opts)
 end
 
 function M.builtin_order()
@@ -134,6 +148,22 @@ function M.collect_revisions(bufnr, cursor, opts)
 
   for _, provider in ipairs(builtin_providers) do
     revisions[provider.name] = safe_revision(provider, bufnr, cursor, opts)
+  end
+
+  return {
+    revisions = revisions,
+    provider_order = order,
+  }
+end
+
+function M.collect_quick_revisions(bufnr, cursor, opts)
+  opts = opts or {}
+
+  local revisions = {}
+  local order = M.builtin_order()
+
+  for _, provider in ipairs(builtin_providers) do
+    revisions[provider.name] = safe_quick_revision(provider, bufnr, cursor, opts)
   end
 
   return {

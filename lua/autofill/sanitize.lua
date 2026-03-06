@@ -22,9 +22,11 @@ local function overlap_suffix_prefix(left, right)
     return 0
   end
 
-  local limit = math.min(#left, #right, MAX_OVERLAP_CHARS)
+  local left_len = #left
+  local limit = math.min(left_len, #right, MAX_OVERLAP_CHARS)
+  local first_byte = right:byte(1)
   for len = limit, 1, -1 do
-    if left:sub(-len) == right:sub(1, len) then
+    if first_byte == left:byte(left_len - len + 1) and left:sub(-len) == right:sub(1, len) then
       return len
     end
   end
@@ -37,9 +39,12 @@ local function overlap_prefix_suffix(left, right)
     return 0
   end
 
-  local limit = math.min(#left, #right, MAX_OVERLAP_CHARS)
+  local left_len = #left
+  local right_len = #right
+  local limit = math.min(left_len, right_len, MAX_OVERLAP_CHARS)
+  local first_byte = left:byte(1)
   for len = limit, 1, -1 do
-    if left:sub(-len) == right:sub(1, len) then
+    if first_byte == right:byte(right_len - len + 1) and left:sub(1, len) == right:sub(-len) then
       return len
     end
   end
@@ -57,6 +62,13 @@ function M.suggestion(ctx, text)
   local before_cursor = tostring(ctx.before_cursor or '')
   local after_cursor = tostring(ctx.after_cursor or '')
 
+  if #before_cursor > MAX_OVERLAP_CHARS then
+    before_cursor = before_cursor:sub(-MAX_OVERLAP_CHARS)
+  end
+  if #after_cursor > MAX_OVERLAP_CHARS then
+    after_cursor = after_cursor:sub(1, MAX_OVERLAP_CHARS)
+  end
+
   local prefix_overlap = overlap_suffix_prefix(before_cursor, text)
   if prefix_overlap > 0 then
     text = text:sub(prefix_overlap + 1)
@@ -66,7 +78,7 @@ function M.suggestion(ctx, text)
     return ''
   end
 
-  local suffix_overlap = overlap_prefix_suffix(text, after_cursor)
+  local suffix_overlap = overlap_suffix_prefix(text, after_cursor)
   if suffix_overlap > 0 then
     text = text:sub(1, #text - suffix_overlap)
   end

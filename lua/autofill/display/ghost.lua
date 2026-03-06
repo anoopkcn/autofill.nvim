@@ -97,6 +97,10 @@ local function render_state(state)
     hl_mode = 'combine',
   }
 
+  if state.extmark_id then
+    opts.id = state.extmark_id
+  end
+
   if #lines > 1 then
     local virt_lines = {}
     for i = 2, #lines do
@@ -286,16 +290,14 @@ function M.show(bufnr, line, col, text, is_partial)
     return
   end
 
-  -- Throttle partial (streaming) renders to avoid flicker
-  if is_partial then
+  -- Throttle partial (streaming) renders to avoid flicker, but let the first one through
+  if is_partial and state.text ~= nil then
     local now = vim.uv.now()
     if now - state.last_render_time < THROTTLE_MS then
       return
     end
   end
 
-  M.clear(bufnr)
-  state = get_buffer_state(bufnr, true)
   state.line = line
   state.col = col
   state.text = text
