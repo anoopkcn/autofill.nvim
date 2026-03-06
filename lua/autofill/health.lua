@@ -18,6 +18,20 @@ local function join_lines(items)
   return table.concat(items, '\n- ')
 end
 
+local function configured_model(options)
+  local backend_opts = type(options) == 'table' and options[options.backend] or nil
+  if type(backend_opts) ~= 'table' then
+    return 'unavailable'
+  end
+
+  local model = backend_opts.model
+  if type(model) ~= 'string' or model == '' then
+    return 'unavailable'
+  end
+
+  return model
+end
+
 function M.check()
   local config = require('autofill.config')
   local backend = require('autofill.backend')
@@ -50,6 +64,7 @@ function M.check()
 
   info('Supported backends: ' .. table.concat(backend.supported_backends(), ', '))
   info('Configured backend: ' .. options.backend)
+  info('Configured model: ' .. configured_model(options))
   info('Prompt limits: ' .. vim.inspect(options.prompt))
   info('Direct keymaps: ' .. vim.inspect(options.keymaps))
   info('Plug mappings: ' .. vim.inspect(ghost.get_plug_mappings()))
