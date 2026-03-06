@@ -195,3 +195,6 @@ XDG_STATE_HOME=/tmp nvim --headless -u NONE -i NONE "+set rtp+=." "+lua require(
 ```
 
 CI runs the same syntax and headless checks on pushes and pull requests.
+
+## LICENSE
+[MIT](LICENSE)
