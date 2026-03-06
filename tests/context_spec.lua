@@ -243,6 +243,62 @@ return function()
   assert(diagnostics.diagnostics[1].message == 'closest', 'LSP diagnostics should sort by proximity')
   assert(diagnostics.diagnostics[2].message == 'second closest', 'LSP diagnostics should keep the next closest entries')
 
+  local pending_symbol_callbacks = {}
+  vim.lsp.buf_request_all = function(_, _, _, callback)
+    pending_symbol_callbacks[#pending_symbol_callbacks + 1] = callback
+  end
+
+  local stale_lsp_bufnr = helpers.new_buffer({
+    'local original = 1',
+  }, {
+    name = '/tmp/autofill-context-lsp/stale.lua',
+    filetype = 'lua',
+    row = 1,
+    col = 17,
+  })
+  lsp_context.refresh_symbols(stale_lsp_bufnr, { immediate = true })
+  helpers.wait(200, function()
+    return #pending_symbol_callbacks == 1
+  end, 'initial stale-response LSP request was not scheduled')
+
+  vim.api.nvim_buf_set_lines(stale_lsp_bufnr, 0, -1, false, {
+    'local updated = 2',
+  })
+  lsp_context.mark_symbols_dirty(stale_lsp_bufnr)
+  pending_symbol_callbacks[1]({
+    stale = {
+      result = {
+        {
+          name = 'Stale',
+          kind = 12,
+          range = { start = { line = 0 } },
+        },
+      },
+    },
+  })
+  vim.wait(20)
+  assert(lsp_context.get_symbols(stale_lsp_bufnr) == nil, 'stale symbol callbacks should be ignored after insert-mode edits dirty the buffer')
+
+  lsp_context.refresh_symbols(stale_lsp_bufnr, { immediate = true, if_dirty = true })
+  helpers.wait(200, function()
+    return #pending_symbol_callbacks == 2
+  end, 'dirty-symbol refresh was not scheduled after invalidation')
+  pending_symbol_callbacks[2]({
+    fresh = {
+      result = {
+        {
+          name = 'Fresh',
+          kind = 12,
+          range = { start = { line = 0 } },
+        },
+      },
+    },
+  })
+  helpers.wait(200, function()
+    local refreshed = lsp_context.get_symbols(stale_lsp_bufnr)
+    return refreshed ~= nil and find_symbol(refreshed, 'Fresh') ~= nil
+  end, 'fresh symbol callback did not repopulate the symbol cache')
+
   vim.lsp.get_clients = original_get_clients
   vim.lsp.util.make_text_document_params = original_make_params
   vim.lsp.buf_request_all = original_buf_request_all

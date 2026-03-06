@@ -7,6 +7,9 @@ local symbol_revision = {}
 local diagnostic_revision = {}
 local symbol_refresh_timers = {}
 local symbol_request_generation = {}
+local symbol_last_tick = {}
+local symbol_pending_tick = {}
+local symbol_dirty = {}
 
 local SYMBOL_REFRESH_DEBOUNCE_MS = 200
 
@@ -97,18 +100,24 @@ local function flatten_symbol_results(results)
   return merged
 end
 
-local function request_symbols(bufnr)
+local function request_symbols(bufnr, tick)
   if not bufnr or bufnr == 0 then return end
   if not vim.api.nvim_buf_is_valid(bufnr) then
     close_symbol_timer(bufnr)
     return
   end
 
+  tick = tick or vim.api.nvim_buf_get_changedtick(bufnr)
+  symbol_pending_tick[bufnr] = nil
   local request_generation = bump_symbol_request_generation(bufnr)
   local clients = vim.lsp.get_clients({ bufnr = bufnr, method = 'textDocument/documentSymbol' })
   if #clients == 0 then
-    symbol_cache[bufnr] = nil
-    bump_revision(symbol_revision, bufnr)
+    if symbol_cache[bufnr] ~= nil then
+      symbol_cache[bufnr] = nil
+      bump_revision(symbol_revision, bufnr)
+    end
+    symbol_last_tick[bufnr] = tick
+    symbol_dirty[bufnr] = false
     return
   end
 
@@ -116,9 +125,12 @@ local function request_symbols(bufnr)
   vim.lsp.buf_request_all(bufnr, 'textDocument/documentSymbol', params, function(results)
     if request_generation ~= symbol_request_generation[bufnr] then return end
     if not vim.api.nvim_buf_is_valid(bufnr) then return end
+    if vim.api.nvim_buf_get_changedtick(bufnr) ~= tick then return end
 
     local flattened = flatten_symbol_results(results)
     symbol_cache[bufnr] = #flattened > 0 and flattened or nil
+    symbol_last_tick[bufnr] = tick
+    symbol_dirty[bufnr] = false
     bump_revision(symbol_revision, bufnr)
   end)
 end
@@ -131,17 +143,49 @@ function M.refresh_symbols(bufnr, opts)
     return
   end
 
+  if opts.if_dirty and not symbol_dirty[bufnr] then
+    return
+  end
+
+  local tick = vim.api.nvim_buf_get_changedtick(bufnr)
+  if tick == symbol_last_tick[bufnr] and not symbol_dirty[bufnr] then
+    return
+  end
+
+  if tick == symbol_pending_tick[bufnr] and not opts.immediate then
+    return
+  end
+
   local timer = ensure_symbol_timer(bufnr)
   if not timer then
-    request_symbols(bufnr)
+    request_symbols(bufnr, tick)
     return
   end
 
   timer:stop()
+  symbol_pending_tick[bufnr] = tick
   local delay = opts.immediate and 0 or (opts.delay_ms or SYMBOL_REFRESH_DEBOUNCE_MS)
   timer:start(delay, 0, vim.schedule_wrap(function()
-    request_symbols(bufnr)
+    request_symbols(bufnr, tick)
   end))
+end
+
+function M.mark_symbols_dirty(bufnr)
+  if not bufnr or bufnr == 0 then return end
+  if not vim.api.nvim_buf_is_valid(bufnr) then
+    close_symbol_timer(bufnr)
+    return
+  end
+
+  symbol_dirty[bufnr] = true
+  symbol_pending_tick[bufnr] = nil
+
+  local timer = symbol_refresh_timers[bufnr]
+  if timer then
+    timer:stop()
+  end
+
+  bump_symbol_request_generation(bufnr)
 end
 
 function M.get_symbols(bufnr)
@@ -218,6 +262,9 @@ function M.clear(bufnr)
   close_symbol_timer(bufnr)
   symbol_cache[bufnr] = nil
   diagnostic_cache[bufnr] = nil
+  symbol_last_tick[bufnr] = nil
+  symbol_pending_tick[bufnr] = nil
+  symbol_dirty[bufnr] = nil
   bump_symbol_request_generation(bufnr)
   bump_revision(symbol_revision, bufnr)
   bump_revision(diagnostic_revision, bufnr)
@@ -230,6 +277,8 @@ function M.stop()
   for bufnr in pairs(symbol_request_generation) do
     bump_symbol_request_generation(bufnr)
   end
+  symbol_pending_tick = {}
+  symbol_dirty = {}
 end
 
 function M.get_revision(bufnr)

@@ -271,6 +271,7 @@ local function on_text_changed()
 end
 
 local function on_insert_leave(bufnr)
+  lsp_context.refresh_symbols(bufnr, { immediate = true, if_dirty = true })
   stop_buffer_session(bufnr)
 end
 
@@ -285,7 +286,10 @@ function M.start()
 
   vim.api.nvim_create_autocmd('TextChangedI', {
     group = augroup,
-    callback = on_text_changed,
+    callback = function(ev)
+      lsp_context.mark_symbols_dirty(ev.buf)
+      on_text_changed()
+    end,
   })
 
   vim.api.nvim_create_autocmd('InsertLeave', {
@@ -309,7 +313,7 @@ function M.start()
     end,
   })
 
-  vim.api.nvim_create_autocmd({ 'TextChanged', 'TextChangedI' }, {
+  vim.api.nvim_create_autocmd('TextChanged', {
     group = augroup,
     callback = function(ev)
       lsp_context.refresh_symbols(ev.buf)
