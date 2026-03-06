@@ -4,6 +4,7 @@ local sanitize = require('autofill.sanitize')
 local M = {}
 
 local SUPPORTED_BACKENDS = {
+  blablador = true,
   claude = true,
   gemini = true,
   openai = true,

@@ -93,6 +93,31 @@ return function()
   local disk_scope = cache.scope(config.get())
   assert(scope ~= disk_scope, 'cache scope should change when neighbor disk-source settings change')
 
+  config.setup({
+    enabled = false,
+    backend = 'blablador',
+    blablador = {
+      api_key_env = 'BLABLADOR_API_KEY',
+      model = 'alias-code',
+      base_url = 'https://example.one/v1',
+      timeout_ms = 10000,
+    },
+  })
+  local blablador_scope_one = cache.scope(config.get())
+
+  config.setup({
+    enabled = false,
+    backend = 'blablador',
+    blablador = {
+      api_key_env = 'BLABLADOR_API_KEY',
+      model = 'alias-code',
+      base_url = 'https://example.two/v1',
+      timeout_ms = 10000,
+    },
+  })
+  local blablador_scope_two = cache.scope(config.get())
+  assert(blablador_scope_one ~= blablador_scope_two, 'cache scope should change when backend base_url changes')
+
   local lsp_context = require('autofill.context.lsp')
   local neighbors_context = require('autofill.context.neighbors')
   local original_lsp_get_revision = lsp_context.get_revision

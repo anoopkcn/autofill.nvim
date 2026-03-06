@@ -7,7 +7,7 @@ AI-assisted ghost-text autocompletion for Neovim.
 ## Features
 
 - Ghost-text completions in insert mode
-- Supported backends: Claude, Gemini, and OpenAI
+- Supported backends: Blablador, Claude, Gemini, and OpenAI
 - Cached completions and quick local-prefix reuse
 - Optional Treesitter, LSP, diagnostics, and neighbor-file context
 - `:Autofill test` for live backend checks
@@ -25,6 +25,7 @@ AI-assisted ghost-text autocompletion for Neovim.
 
 | Backend | Environment Variable | Default Model |
 | --- | --- | --- |
+| `blablador` | `BLABLADOR_API_KEY` | `alias-code` |
 | `claude` | `ANTHROPIC_API_KEY` | `claude-sonnet-4-20250514` |
 | `gemini` | `GEMINI_API_KEY` | `gemini-2.5-flash` |
 | `openai` | `OPENAI_API_KEY` | `gpt-5-mini` |
@@ -122,6 +123,12 @@ require("autofill").setup({
     accept_word = nil,
     dismiss = nil,
   },
+  blablador = {
+    api_key_env = "BLABLADOR_API_KEY",
+    model = "alias-code",
+    base_url = "https://api.helmholtz-blablador.fz-juelich.de/v1",
+    timeout_ms = 10000,
+  },
   claude = {
     api_key_env = "ANTHROPIC_API_KEY",
     model = "claude-sonnet-4-20250514",
@@ -142,13 +149,14 @@ require("autofill").setup({
 
 Important options:
 
-- `backend`: `claude`, `gemini`, or `openai`
+- `backend`: `blablador`, `claude`, `gemini`, or `openai`
 - `streaming_display`: use streaming ghost updates when `true`; use a real non-streaming backend request when `false`
 - `profiling`: include timing output in `:Autofill test`
 - `filetypes_exclude`: disable the plugin for specific filetypes
 - `neighbors.enabled`: include nearby file snapshots in the prompt
 - `neighbors.budget`: total neighbor-context character budget
 - `neighbors.max_files`: maximum number of neighbor files included
+- `blablador.base_url`: override the OpenAI-compatible Blablador API root when needed
 
 ## Health And Troubleshooting
 

@@ -8,6 +8,12 @@ local VALID_LOG_LEVELS = {
 }
 
 local SUPPORTED_BACKEND_DEFAULTS = {
+  blablador = {
+    api_key_env = 'BLABLADOR_API_KEY',
+    model = 'alias-code',
+    base_url = 'https://api.helmholtz-blablador.fz-juelich.de/v1',
+    timeout_ms = 10000,
+  },
   claude = {
     api_key_env = 'ANTHROPIC_API_KEY',
     model = 'claude-sonnet-4-20250514',
@@ -240,6 +246,9 @@ function M.inspect(options)
     else
       validate_optional_string(backend_opts.api_key_env, backend_name .. '.api_key_env', errors)
       validate_optional_string(backend_opts.model, backend_name .. '.model', errors)
+      if backend_name == 'blablador' then
+        validate_optional_string(backend_opts.base_url, backend_name .. '.base_url', errors)
+      end
       if not is_positive_integer(backend_opts.timeout_ms) then
         errors[#errors + 1] = backend_name .. '.timeout_ms must be a positive integer'
       end

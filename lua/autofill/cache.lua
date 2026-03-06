@@ -87,6 +87,8 @@ function M.scope(config)
     ':',
     backend_opts.model or '',
     ':',
+    backend_opts.base_url or '',
+    ':',
     tostring(config.max_tokens or ''),
     ':',
     tostring(config.context_window or ''),
