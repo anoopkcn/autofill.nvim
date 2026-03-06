@@ -2,9 +2,15 @@ local buffer = require('autofill.context.buffer')
 local treesitter = require('autofill.context.treesitter')
 local lsp = require('autofill.context.lsp')
 local neighbors = require('autofill.context.neighbors')
+local config = require('autofill.config')
 local util = require('autofill.util')
 
 local M = {}
+
+local function lsp_enabled()
+  local lsp_config = config.get().lsp or {}
+  return lsp_config.enabled == true
+end
 
 local builtin_providers = {
   {
@@ -27,6 +33,9 @@ local builtin_providers = {
   },
   {
     name = 'lsp',
+    enabled = function()
+      return lsp_enabled()
+    end,
     collect = function(bufnr, cursor)
       local lsp_ctx = lsp.get_context(bufnr, cursor)
       local symbols = lsp.get_symbols(bufnr)
@@ -38,6 +47,9 @@ local builtin_providers = {
     end,
     revision = function(bufnr)
       return lsp.get_revision(bufnr)
+    end,
+    disabled_revision = function()
+      return 'off'
     end,
   },
   {
@@ -56,6 +68,20 @@ local builtin_providers = {
 
 local function provider_error(provider, kind, err)
   util.log('debug', 'Context provider ' .. provider.name .. ' ' .. kind .. ' failed: ' .. tostring(err))
+end
+
+local function provider_enabled(provider, bufnr, cursor, opts)
+  if type(provider.enabled) ~= 'function' then
+    return true
+  end
+
+  local ok, result = pcall(provider.enabled, bufnr, cursor, opts or {})
+  if not ok then
+    provider_error(provider, 'enabled', result)
+    return false
+  end
+
+  return result ~= false
 end
 
 local function safe_collect(provider, bufnr, cursor, opts)
@@ -97,6 +123,20 @@ local function safe_quick_revision(provider, bufnr, cursor, opts)
   return safe_revision(provider, bufnr, cursor, opts)
 end
 
+local function safe_disabled_revision(provider, bufnr, cursor, opts)
+  if type(provider.disabled_revision) ~= 'function' then
+    return ''
+  end
+
+  local ok, result = pcall(provider.disabled_revision, bufnr, cursor, opts or {})
+  if not ok then
+    provider_error(provider, 'disabled_revision', result)
+    return ''
+  end
+
+  return tostring(result or '')
+end
+
 function M.builtin_order()
   local names = {}
   for _, provider in ipairs(builtin_providers) do
@@ -121,10 +161,11 @@ function M.collect(bufnr, cursor, opts)
   local order = M.builtin_order()
 
   for _, provider in ipairs(builtin_providers) do
+    local enabled = provider_enabled(provider, bufnr, cursor, opts)
     local normalized = M.normalize_result(
       provider.name,
-      safe_collect(provider, bufnr, cursor, opts),
-      safe_revision(provider, bufnr, cursor, opts)
+      enabled and safe_collect(provider, bufnr, cursor, opts) or nil,
+      enabled and safe_revision(provider, bufnr, cursor, opts) or safe_disabled_revision(provider, bufnr, cursor, opts)
     )
 
     if normalized.value ~= nil then
@@ -147,7 +188,11 @@ function M.collect_revisions(bufnr, cursor, opts)
   local order = M.builtin_order()
 
   for _, provider in ipairs(builtin_providers) do
-    revisions[provider.name] = safe_revision(provider, bufnr, cursor, opts)
+    if provider_enabled(provider, bufnr, cursor, opts) then
+      revisions[provider.name] = safe_revision(provider, bufnr, cursor, opts)
+    else
+      revisions[provider.name] = safe_disabled_revision(provider, bufnr, cursor, opts)
+    end
   end
 
   return {
@@ -163,7 +208,11 @@ function M.collect_quick_revisions(bufnr, cursor, opts)
   local order = M.builtin_order()
 
   for _, provider in ipairs(builtin_providers) do
-    revisions[provider.name] = safe_quick_revision(provider, bufnr, cursor, opts)
+    if provider_enabled(provider, bufnr, cursor, opts) then
+      revisions[provider.name] = safe_quick_revision(provider, bufnr, cursor, opts)
+    else
+      revisions[provider.name] = safe_disabled_revision(provider, bufnr, cursor, opts)
+    end
   end
 
   return {

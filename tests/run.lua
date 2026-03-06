@@ -2,6 +2,7 @@ local M = {}
 
 local TESTS = {
   { name = 'util', module = 'tests.util_spec' },
+  { name = 'config', module = 'tests.config_spec' },
   { name = 'keymaps', module = 'tests.keymaps_spec' },
   { name = 'cache', module = 'tests.cache_spec' },
   { name = 'backend', module = 'tests.backend_spec' },

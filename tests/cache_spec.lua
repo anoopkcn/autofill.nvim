@@ -95,6 +95,20 @@ return function()
 
   config.setup({
     enabled = false,
+  })
+  local lsp_disabled_scope = cache.scope(config.get())
+
+  config.setup({
+    enabled = false,
+    lsp = {
+      enabled = true,
+    },
+  })
+  local lsp_enabled_scope = cache.scope(config.get())
+  assert(lsp_disabled_scope ~= lsp_enabled_scope, 'cache scope should change when LSP context is toggled')
+
+  config.setup({
+    enabled = false,
     backend = 'blablador',
     blablador = {
       api_key_env = 'BLABLADOR_API_KEY',
@@ -138,10 +152,14 @@ return function()
     return 'imports=foo'
   end
 
+  config.setup({
+    enabled = false,
+  })
+
   local context_revision_one = context.get_revision(revision_bufnr, { 1, 6 })
   local context_revision_two = context.get_revision(revision_bufnr, { 1, 6 })
   local quick_revision_one = cache.quick_key({
-    scope = scope,
+    scope = lsp_disabled_scope,
     bufnr = revision_bufnr,
     row = 1,
     filetype = 'lua',
@@ -150,7 +168,7 @@ return function()
     after_cursor = 'cache = true',
   })
   local quick_revision_two = cache.quick_key({
-    scope = scope,
+    scope = lsp_disabled_scope,
     bufnr = revision_bufnr,
     row = 1,
     filetype = 'lua',
@@ -161,13 +179,33 @@ return function()
   assert(context_revision_one == context_revision_two, 'context revision composition should be stable when provider revisions are unchanged')
   assert(quick_revision_one == quick_revision_two, 'quick cache keys should stay stable for unchanged provider revisions')
 
+  config.setup({
+    enabled = false,
+    lsp = {
+      enabled = true,
+    },
+  })
+
+  local context_revision_lsp_enabled = context.get_revision(revision_bufnr, { 1, 6 })
+  local quick_revision_lsp_enabled = cache.quick_key({
+    scope = lsp_enabled_scope,
+    bufnr = revision_bufnr,
+    row = 1,
+    filetype = 'lua',
+    context_revision = context_revision_lsp_enabled,
+    before_cursor = 'local ',
+    after_cursor = 'cache = true',
+  })
+  assert(context_revision_one ~= context_revision_lsp_enabled, 'context revision composition should change when LSP context is toggled')
+  assert(quick_revision_one ~= quick_revision_lsp_enabled, 'quick cache keys should change when LSP context is toggled')
+
   neighbors_context.get_revision = function()
     return 'imports=bar'
   end
 
   local context_revision_three = context.get_revision(revision_bufnr, { 1, 6 })
   local quick_revision_three = cache.quick_key({
-    scope = scope,
+    scope = lsp_enabled_scope,
     bufnr = revision_bufnr,
     row = 1,
     filetype = 'lua',
@@ -175,8 +213,8 @@ return function()
     before_cursor = 'local ',
     after_cursor = 'cache = true',
   })
-  assert(context_revision_one ~= context_revision_three, 'context revision composition should change when a provider revision changes')
-  assert(quick_revision_one ~= quick_revision_three, 'quick cache keys should change when provider revisions change')
+  assert(context_revision_lsp_enabled ~= context_revision_three, 'context revision composition should change when a provider revision changes')
+  assert(quick_revision_lsp_enabled ~= quick_revision_three, 'quick cache keys should change when provider revisions change')
 
   lsp_context.get_revision = original_lsp_get_revision
   neighbors_context.get_revision = original_neighbors_get_revision

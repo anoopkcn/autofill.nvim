@@ -93,22 +93,41 @@ return function()
   }), 'gather should expose the builtin provider order')
   assert(gathered.providers.buffer.before == gathered.before_cursor, 'gather should preserve legacy buffer fields from provider output')
   assert(gathered.providers.treesitter == gathered.treesitter, 'gather should preserve legacy Treesitter fields from provider output')
-  assert(gathered.providers.lsp == gathered.lsp, 'gather should preserve legacy LSP fields from provider output')
+  assert(gathered.providers.lsp == nil, 'gather should omit disabled LSP provider output')
+  assert(gathered.lsp == nil, 'gather should preserve absent legacy LSP fields when disabled')
   assert(gathered.providers.neighbors == gathered.neighbors, 'gather should preserve legacy neighbor fields from provider output')
   assert(message:find('File: sample.lua', 1, true), 'prompt should include the current filename')
   assert(message:find('Language: lua', 1, true), 'prompt should include the current filetype')
   assert(message:find('Related files:\n--- helper.lua ---\nreturn 1', 1, true), 'prompt should include neighbor file snapshots')
-  assert(message:find('File outline:\n  Function demo %(line 3%)'), 'prompt should include LSP symbols')
   assert(message:find('Scope chain:\n  function_declaration %(line 3%): local function demo%(%)'), 'prompt should include Treesitter scopes')
   assert(message:find('Cursor is inside a string.', 1, true), 'prompt should include Treesitter semantic hints')
-  assert(message:find('Nearby diagnostics:\n  Line 7 %[WARN%]: unused local value'), 'prompt should include nearby diagnostics')
+  assert(not message:find('File outline:', 1, true), 'prompt should omit LSP symbols when LSP context is disabled')
+  assert(not message:find('Nearby diagnostics:', 1, true), 'prompt should omit diagnostics when LSP context is disabled')
   assert(message:find('local example = <CURSOR>', 1, true), 'prompt should include the cursor marker')
   local related_pos = assert(message:find('Related files:', 1, true))
-  local outline_pos = assert(message:find('File outline:', 1, true))
   local scope_pos = assert(message:find('Scope chain:', 1, true))
-  local diagnostics_pos = assert(message:find('Nearby diagnostics:', 1, true))
   local cursor_pos = assert(message:find('local example = <CURSOR>', 1, true))
-  assert(related_pos < outline_pos and outline_pos < scope_pos and scope_pos < diagnostics_pos and diagnostics_pos < cursor_pos, 'prompt sections should render in stable provider-backed order')
+  assert(related_pos < scope_pos and scope_pos < cursor_pos, 'prompt sections should render in stable provider-backed order when LSP context is disabled')
+
+  config.setup({
+    context_window = 200,
+    context_ratio = 0.5,
+    lsp = {
+      enabled = true,
+    },
+  })
+
+  gathered = context.gather(gather_bufnr, { 1, 16 })
+  message = prompt.build_user_message(gathered)
+  assert(gathered.providers.lsp == gathered.lsp, 'gather should preserve legacy LSP fields from provider output when enabled')
+  assert(message:find('File outline:\n  Function demo %(line 3%)'), 'prompt should include LSP symbols when enabled')
+  assert(message:find('Nearby diagnostics:\n  Line 7 %[WARN%]: unused local value'), 'prompt should include nearby diagnostics when enabled')
+  local outline_pos = assert(message:find('File outline:', 1, true))
+  local diagnostics_pos = assert(message:find('Nearby diagnostics:', 1, true))
+  related_pos = assert(message:find('Related files:', 1, true))
+  scope_pos = assert(message:find('Scope chain:', 1, true))
+  cursor_pos = assert(message:find('local example = <CURSOR>', 1, true))
+  assert(related_pos < outline_pos and outline_pos < scope_pos and scope_pos < diagnostics_pos and diagnostics_pos < cursor_pos, 'prompt sections should render in stable provider-backed order when LSP context is enabled')
 
   config.setup({
     context_window = 200,

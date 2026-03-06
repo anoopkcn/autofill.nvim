@@ -76,9 +76,21 @@ return function()
   assert(vim.deep_equal(gathered.provider_order, registry.builtin_order()), 'gather should preserve builtin provider order')
   assert(gathered.providers.buffer.before == 'local ', 'gather should expose buffer provider output')
   assert(gathered.before_cursor == 'local ', 'gather should preserve legacy top-level buffer fields')
-  assert(gathered.lsp and gathered.lsp.symbols and gathered.lsp.symbols[1].name == 'demo', 'gather should preserve legacy top-level LSP fields')
+  assert(gathered.lsp == nil, 'gather should omit LSP provider output when LSP context is disabled')
   assert(gathered.neighbors == nil, 'gather should skip empty provider results')
-  assert(gathered.revisions.lsp == 'sym=3:diag=4', 'gather should expose provider revisions')
+  assert(gathered.revisions.lsp == 'off', 'gather should expose disabled LSP revisions when LSP context is off')
+  assert(context.get_revision(bufnr, { 1, 6 }) == 'lsp=off\0neighbors=imports=foo', 'context should compose disabled-provider revisions deterministically')
+
+  config.setup({
+    enabled = false,
+    lsp = {
+      enabled = true,
+    },
+  })
+
+  gathered = context.gather(bufnr, { 1, 6 })
+  assert(gathered.lsp and gathered.lsp.symbols and gathered.lsp.symbols[1].name == 'demo', 'gather should preserve legacy top-level LSP fields when enabled')
+  assert(gathered.revisions.lsp == 'sym=3:diag=4', 'gather should expose LSP provider revisions when enabled')
   assert(context.get_revision(bufnr, { 1, 6 }) == composed, 'context should compose provider revisions without trigger-side provider knowledge')
 
   treesitter_context.get_context = function()

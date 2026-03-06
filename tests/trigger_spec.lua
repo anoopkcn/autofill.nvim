@@ -38,7 +38,7 @@ return function()
     throttle_ms = 0,
   })
 
-  local bufnr = helpers.new_buffer({ '' }, {
+  local disabled_bufnr = helpers.new_buffer({ '' }, {
     filetype = 'lua',
     row = 1,
     col = 0,
@@ -48,6 +48,41 @@ return function()
   vim.fn.mode = function()
     return 'i'
   end
+
+  vim.api.nvim_buf_set_lines(disabled_bufnr, 0, -1, false, { 'a' })
+  vim.api.nvim_win_set_cursor(0, { 1, 1 })
+  vim.api.nvim_exec_autocmds('TextChangedI', { buffer = disabled_bufnr })
+  helpers.wait(200, function()
+    return calls == 1
+  end, 'completion request was not scheduled with LSP disabled by default')
+  vim.api.nvim_exec_autocmds('InsertLeave', { buffer = disabled_bufnr })
+  vim.api.nvim_exec_autocmds('TextChanged', { buffer = disabled_bufnr })
+  vim.api.nvim_exec_autocmds('DiagnosticChanged', { buffer = disabled_bufnr })
+  assert(#symbol_refreshes == 0, 'LSP refresh hooks should stay idle when LSP context is disabled')
+  assert(dirty_marks == 0, 'LSP dirty tracking should stay idle when LSP context is disabled')
+
+  helpers.reset_runtime()
+  calls = 0
+  symbol_refreshes = {}
+  dirty_marks = 0
+  backend.complete = function()
+    calls = calls + 1
+  end
+
+  autofill.setup({
+    enabled = true,
+    debounce_ms = 0,
+    throttle_ms = 0,
+    lsp = {
+      enabled = true,
+    },
+  })
+
+  local bufnr = helpers.new_buffer({ '' }, {
+    filetype = 'lua',
+    row = 1,
+    col = 0,
+  })
 
   local initial_symbol_refreshes = #symbol_refreshes
   ghost.show(bufnr, 1, 0, 'abc')

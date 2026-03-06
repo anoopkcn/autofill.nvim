@@ -53,6 +53,9 @@ M.defaults = {
     include_disk_files = true,
     disk_scan_limit = 32,
   },
+  lsp = {
+    enabled = false,
+  },
   prompt = {
     max_chars = 12000,
     max_neighbors_chars = 2500,
@@ -201,6 +204,14 @@ function M.inspect(options)
     end
     if not is_positive_integer(options.neighbors.disk_scan_limit) then
       errors[#errors + 1] = 'neighbors.disk_scan_limit must be a positive integer'
+    end
+  end
+
+  if type(options.lsp) ~= 'table' then
+    errors[#errors + 1] = 'lsp must be a table'
+  else
+    if type(options.lsp.enabled) ~= 'boolean' then
+      errors[#errors + 1] = 'lsp.enabled must be a boolean'
     end
   end
 

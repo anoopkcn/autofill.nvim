@@ -9,7 +9,7 @@ AI-assisted ghost-text autocompletion for Neovim.
 - Ghost-text completions in insert mode
 - Supported backends: Blablador, Claude, Gemini, and OpenAI
 - Cached completions and quick local-prefix reuse
-- Optional Treesitter, LSP, diagnostics, and neighbor-file context
+- Optional Treesitter and neighbor-file context, plus opt-in LSP symbols and diagnostics
 - `:Autofill test` for live backend checks
 - `:checkhealth autofill` for config and runtime checks
 - Headless test suite and CI coverage for core regressions
@@ -19,7 +19,7 @@ AI-assisted ghost-text autocompletion for Neovim.
 - Neovim `0.10+`
 - `curl`
 - An API key for the backend you configure
-- Treesitter and LSP are optional, but improve context quality(optional)
+- Treesitter is optional, and LSP context is available as an opt-in config toggle
 
 ## Supported Backends
 
@@ -117,6 +117,9 @@ require("autofill").setup({
     budget = 2000,
     max_files = 2,
   },
+  lsp = {
+    enabled = false,
+  },
   filetypes_exclude = {},
   keymaps = {
     accept = nil,
@@ -156,7 +159,18 @@ Important options:
 - `neighbors.enabled`: include nearby file snapshots in the prompt
 - `neighbors.budget`: total neighbor-context character budget
 - `neighbors.max_files`: maximum number of neighbor files included
+- `lsp.enabled`: include LSP document symbols and nearby diagnostics in the prompt
 - `blablador.base_url`: override the OpenAI-compatible Blablador API root when needed
+
+Enable LSP-backed context explicitly if you want the previous behavior:
+
+```lua
+require("autofill").setup({
+  lsp = {
+    enabled = true,
+  },
+})
+```
 
 ## Health And Troubleshooting
 

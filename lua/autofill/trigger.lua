@@ -17,6 +17,11 @@ local sessions = {}
 
 local PARTIAL_IDLE_MS = 75
 
+local function lsp_enabled()
+  local lsp_config = require('autofill.config').get().lsp or {}
+  return lsp_config.enabled == true
+end
+
 local function ensure_session(bufnr)
   local session = sessions[bufnr]
   if session then
@@ -271,7 +276,9 @@ local function on_text_changed()
 end
 
 local function on_insert_leave(bufnr)
-  lsp_context.refresh_symbols(bufnr, { immediate = true, if_dirty = true })
+  if lsp_enabled() then
+    lsp_context.refresh_symbols(bufnr, { immediate = true, if_dirty = true })
+  end
   stop_buffer_session(bufnr)
 end
 
@@ -287,7 +294,9 @@ function M.start()
   vim.api.nvim_create_autocmd('TextChangedI', {
     group = augroup,
     callback = function(ev)
-      lsp_context.mark_symbols_dirty(ev.buf)
+      if lsp_enabled() then
+        lsp_context.mark_symbols_dirty(ev.buf)
+      end
       on_text_changed()
     end,
   })
@@ -309,21 +318,27 @@ function M.start()
   vim.api.nvim_create_autocmd({ 'BufEnter', 'LspAttach' }, {
     group = augroup,
     callback = function(ev)
-      lsp_context.refresh_symbols(ev.buf, { immediate = true })
+      if lsp_enabled() then
+        lsp_context.refresh_symbols(ev.buf, { immediate = true })
+      end
     end,
   })
 
   vim.api.nvim_create_autocmd('TextChanged', {
     group = augroup,
     callback = function(ev)
-      lsp_context.refresh_symbols(ev.buf)
+      if lsp_enabled() then
+        lsp_context.refresh_symbols(ev.buf)
+      end
     end,
   })
 
   vim.api.nvim_create_autocmd({ 'BufEnter', 'DiagnosticChanged' }, {
     group = augroup,
     callback = function(ev)
-      lsp_context.refresh_diagnostics(ev.buf)
+      if lsp_enabled() then
+        lsp_context.refresh_diagnostics(ev.buf)
+      end
     end,
   })
 
@@ -338,7 +353,9 @@ function M.start()
     group = augroup,
     callback = function(ev)
       stop_buffer_session(ev.buf, { clear_cache = true })
-      lsp_context.clear(ev.buf)
+      if lsp_enabled() then
+        lsp_context.clear(ev.buf)
+      end
       neighbors_context.clear(ev.buf)
       treesitter_context.clear(ev.buf)
     end,

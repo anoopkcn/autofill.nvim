@@ -89,6 +89,7 @@ function M.scope(config)
   local backend_name = config.backend or ''
   local backend_opts = config[backend_name] or {}
   local neighbors = config.neighbors or {}
+  local lsp = config.lsp or {}
   local prompt_config = config.prompt or {}
 
   local parts = {
@@ -113,6 +114,8 @@ function M.scope(config)
     tostring(neighbors.include_disk_files),
     ':',
     tostring(neighbors.disk_scan_limit or ''),
+    ':',
+    tostring(lsp.enabled),
     ':',
     tostring(prompt_config.max_chars or ''),
     ':',
