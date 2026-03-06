@@ -16,7 +16,7 @@ local SUPPORTED_BACKEND_DEFAULTS = {
   },
   claude = {
     api_key_env = 'ANTHROPIC_API_KEY',
-    model = 'claude-sonnet-4-20250514',
+    model = 'claude-haiku-4-5-20251001',
     timeout_ms = 10000,
   },
   gemini = {
@@ -38,6 +38,7 @@ local REMOVED_BACKEND_CONFIGS = {
 M.defaults = {
   enabled = true,
   backend = 'claude',
+  model = nil,
   debounce_ms = 200,
   throttle_ms = 400,
   context_window = 8000,
@@ -111,6 +112,26 @@ local function validate_optional_string(value, key, errors)
   end
 end
 
+local function normalize_model_override(options)
+  local backend = require('autofill.backend')
+  local model = options.model
+
+  if type(model) ~= 'string' or model == '' then
+    return
+  end
+
+  if not backend.is_supported(options.backend) then
+    return
+  end
+
+  local backend_opts = options[options.backend]
+  if type(backend_opts) ~= 'table' then
+    return
+  end
+
+  backend_opts.model = model
+end
+
 function M.inspect(options)
   local backend = require('autofill.backend')
   local errors = {}
@@ -130,6 +151,8 @@ function M.inspect(options)
   elseif not backend.is_supported(options.backend) then
     errors[#errors + 1] = 'backend "' .. options.backend .. '" is not supported'
   end
+
+  validate_optional_string(options.model, 'model', errors)
 
   for backend_name in pairs(REMOVED_BACKEND_CONFIGS) do
     if options[backend_name] ~= nil then
@@ -293,6 +316,7 @@ end
 
 function M.setup(opts)
   local merged = vim.tbl_deep_extend('force', {}, M.defaults, opts or {})
+  normalize_model_override(merged)
   M.validate(merged)
   M.options = merged
 end

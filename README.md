@@ -26,7 +26,7 @@ AI-assisted ghost-text autocompletion for Neovim.
 | Backend | Environment Variable | Default Model |
 | --- | --- | --- |
 | `blablador` | `BLABLADOR_API_KEY` | `alias-code` |
-| `claude` | `ANTHROPIC_API_KEY` | `claude-sonnet-4-20250514` |
+| `claude` | `ANTHROPIC_API_KEY` | `claude-haiku-4-5-20251001` |
 | `gemini` | `GEMINI_API_KEY` | `gemini-2.5-flash` |
 | `openai` | `OPENAI_API_KEY` | `gpt-5-mini` |
 
@@ -59,6 +59,7 @@ Minimum setup:
 ```lua
 require("autofill").setup({
   backend = "claude",
+  model = "claude-haiku-4-5-20251001",
 })
 ```
 
@@ -67,6 +68,7 @@ Typical setup with explicit direct keymaps:
 ```lua
 require("autofill").setup({
   backend = "gemini",
+  model = "gemini-2.5-flash",
   log_level = "warn",
   keymaps = {
     accept = "<Tab>",
@@ -104,6 +106,7 @@ Current defaults:
 require("autofill").setup({
   enabled = true,
   backend = "claude",
+  model = nil,
   debounce_ms = 200,
   throttle_ms = 400,
   context_window = 8000,
@@ -137,7 +140,7 @@ require("autofill").setup({
   },
   claude = {
     api_key_env = "ANTHROPIC_API_KEY",
-    model = "claude-sonnet-4-20250514",
+    model = "claude-haiku-4-5-20251001",
     timeout_ms = 10000,
   },
   gemini = {
@@ -156,6 +159,7 @@ require("autofill").setup({
 Important options:
 
 - `backend`: `blablador`, `claude`, `gemini`, or `openai`
+- `model`: optional shorthand for the selected backend's model; when set, it overrides `openai.model`, `claude.model`, `gemini.model`, or `blablador.model` for the active backend
 - `streaming_display`: use streaming ghost updates when `true`; use a real non-streaming backend request when `false`
 - `profiling`: include timing output in `:Autofill test`
 - `filetypes_exclude`: disable the plugin for specific filetypes
@@ -165,6 +169,17 @@ Important options:
 - `treesitter.enabled`: include Treesitter-derived scope and semantic context in the prompt
 - `lsp.enabled`: include LSP document symbols and nearby diagnostics in the prompt
 - `blablador.base_url`: override the OpenAI-compatible Blablador API root when needed
+
+If you prefer backend-specific configuration instead of the shorthand, keep setting the model inside the backend block:
+
+```lua
+require("autofill").setup({
+  backend = "openai",
+  openai = {
+    model = "gpt-5-mini",
+  },
+})
+```
 
 Disable Treesitter-backed context if you want prompt construction to rely only on buffer, neighbors, and any explicitly enabled LSP data:
 

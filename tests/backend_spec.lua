@@ -97,6 +97,39 @@ return function()
 
   config.setup({
     backend = 'openai',
+    model = 'gpt-5',
+    streaming_display = false,
+    max_tokens = 64,
+    openai = {
+      api_key_env = 'OPENAI_API_KEY',
+      model = 'gpt-5-mini',
+      timeout_ms = 1111,
+    },
+  })
+
+  local overridden_model_result = nil
+  request.send = function(opts, callback)
+    assert(opts.body.model == 'gpt-5', 'top-level model should override the active backend model')
+    callback({
+      body = vim.json.encode({
+        output_text = 'baz',
+      }),
+    })
+  end
+
+  openai.complete(ctx, {
+    on_complete = function(text)
+      overridden_model_result = text
+    end,
+    on_error = function(err)
+      error('unexpected OpenAI top-level model override error: ' .. tostring(err))
+    end,
+  })
+
+  assert(overridden_model_result == 'baz', 'OpenAI should still complete successfully when top-level model override is used')
+
+  config.setup({
+    backend = 'openai',
     streaming_display = false,
     max_tokens = 64,
     openai = {

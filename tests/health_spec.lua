@@ -57,6 +57,7 @@ end
 
 return function()
   helpers.reset_runtime()
+  local config = require('autofill.config')
 
   local ok_run, err, messages = run_health_check({
     config = {
@@ -131,6 +132,9 @@ return function()
           warnings = {},
         }
       end,
+      is_supported = function(name)
+        return name == 'openai'
+      end,
       supported_backends = function()
         return { 'openai' }
       end,
@@ -147,6 +151,42 @@ return function()
     'health check should continue reporting validation failures')
   assert(find_message(messages, 'info', 'Configured model: unavailable'),
     'health check should report an unavailable model when the backend config is malformed')
+
+  config.setup({
+    enabled = false,
+    backend = 'openai',
+    model = 'gpt-5',
+    openai = {
+      model = 'gpt-5-mini',
+    },
+  })
+
+  ok_run, err, messages = run_health_check({
+    config = config,
+    backend = {
+      inspect_runtime = function()
+        return {
+          errors = {},
+          warnings = {},
+        }
+      end,
+      is_supported = function(name)
+        return name == 'openai'
+      end,
+      supported_backends = function()
+        return { 'openai' }
+      end,
+    },
+    ghost = {
+      get_plug_mappings = function()
+        return {}
+      end,
+    },
+  })
+
+  assert(ok_run, 'health check should succeed when top-level model override is configured: ' .. tostring(err))
+  assert(find_message(messages, 'info', 'Configured model: gpt-5'),
+    'health check should report the effective active model after top-level model normalization')
 
   helpers.reset_runtime()
 end
