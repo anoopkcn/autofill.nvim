@@ -85,6 +85,16 @@ return function()
   })
   local gathered = context.gather(gather_bufnr, { 1, 16 })
   local message = prompt.build_user_message(gathered)
+  assert(vim.deep_equal(gathered.provider_order, {
+    'buffer',
+    'treesitter',
+    'lsp',
+    'neighbors',
+  }), 'gather should expose the builtin provider order')
+  assert(gathered.providers.buffer.before == gathered.before_cursor, 'gather should preserve legacy buffer fields from provider output')
+  assert(gathered.providers.treesitter == gathered.treesitter, 'gather should preserve legacy Treesitter fields from provider output')
+  assert(gathered.providers.lsp == gathered.lsp, 'gather should preserve legacy LSP fields from provider output')
+  assert(gathered.providers.neighbors == gathered.neighbors, 'gather should preserve legacy neighbor fields from provider output')
   assert(message:find('File: sample.lua', 1, true), 'prompt should include the current filename')
   assert(message:find('Language: lua', 1, true), 'prompt should include the current filetype')
   assert(message:find('Related files:\n--- helper.lua ---\nreturn 1', 1, true), 'prompt should include neighbor file snapshots')
@@ -93,6 +103,12 @@ return function()
   assert(message:find('Cursor is inside a string.', 1, true), 'prompt should include Treesitter semantic hints')
   assert(message:find('Nearby diagnostics:\n  Line 7 %[WARN%]: unused local value'), 'prompt should include nearby diagnostics')
   assert(message:find('local example = <CURSOR>', 1, true), 'prompt should include the cursor marker')
+  local related_pos = assert(message:find('Related files:', 1, true))
+  local outline_pos = assert(message:find('File outline:', 1, true))
+  local scope_pos = assert(message:find('Scope chain:', 1, true))
+  local diagnostics_pos = assert(message:find('Nearby diagnostics:', 1, true))
+  local cursor_pos = assert(message:find('local example = <CURSOR>', 1, true))
+  assert(related_pos < outline_pos and outline_pos < scope_pos and scope_pos < diagnostics_pos and diagnostics_pos < cursor_pos, 'prompt sections should render in stable provider-backed order')
 
   config.setup({
     context_window = 200,

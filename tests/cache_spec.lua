@@ -1,10 +1,10 @@
-local helpers = require('tests.helpers')
-
 return function()
-  helpers.reset_runtime()
+  require('tests.helpers').reset_runtime()
 
   local cache = require('autofill.cache')
   local config = require('autofill.config')
+  local context = require('autofill.context')
+  local helpers = require('tests.helpers')
 
   cache.clear()
   config.setup({ enabled = false })
@@ -92,6 +92,69 @@ return function()
   })
   local disk_scope = cache.scope(config.get())
   assert(scope ~= disk_scope, 'cache scope should change when neighbor disk-source settings change')
+
+  local lsp_context = require('autofill.context.lsp')
+  local neighbors_context = require('autofill.context.neighbors')
+  local original_lsp_get_revision = lsp_context.get_revision
+  local original_neighbors_get_revision = neighbors_context.get_revision
+  local revision_bufnr = helpers.new_buffer({
+    'local cache = true',
+  }, {
+    name = '/tmp/autofill-cache/example.lua',
+    filetype = 'lua',
+    row = 1,
+    col = 6,
+  })
+
+  lsp_context.get_revision = function()
+    return 'sym=1:diag=1'
+  end
+  neighbors_context.get_revision = function()
+    return 'imports=foo'
+  end
+
+  local context_revision_one = context.get_revision(revision_bufnr, { 1, 6 })
+  local context_revision_two = context.get_revision(revision_bufnr, { 1, 6 })
+  local quick_revision_one = cache.quick_key({
+    scope = scope,
+    bufnr = revision_bufnr,
+    row = 1,
+    filetype = 'lua',
+    context_revision = context_revision_one,
+    before_cursor = 'local ',
+    after_cursor = 'cache = true',
+  })
+  local quick_revision_two = cache.quick_key({
+    scope = scope,
+    bufnr = revision_bufnr,
+    row = 1,
+    filetype = 'lua',
+    context_revision = context_revision_two,
+    before_cursor = 'local ',
+    after_cursor = 'cache = true',
+  })
+  assert(context_revision_one == context_revision_two, 'context revision composition should be stable when provider revisions are unchanged')
+  assert(quick_revision_one == quick_revision_two, 'quick cache keys should stay stable for unchanged provider revisions')
+
+  neighbors_context.get_revision = function()
+    return 'imports=bar'
+  end
+
+  local context_revision_three = context.get_revision(revision_bufnr, { 1, 6 })
+  local quick_revision_three = cache.quick_key({
+    scope = scope,
+    bufnr = revision_bufnr,
+    row = 1,
+    filetype = 'lua',
+    context_revision = context_revision_three,
+    before_cursor = 'local ',
+    after_cursor = 'cache = true',
+  })
+  assert(context_revision_one ~= context_revision_three, 'context revision composition should change when a provider revision changes')
+  assert(quick_revision_one ~= quick_revision_three, 'quick cache keys should change when provider revisions change')
+
+  lsp_context.get_revision = original_lsp_get_revision
+  neighbors_context.get_revision = original_neighbors_get_revision
 
   cache.clear()
 end

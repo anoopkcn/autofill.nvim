@@ -1,39 +1,47 @@
-local buffer = require('autofill.context.buffer')
-local treesitter = require('autofill.context.treesitter')
-local lsp = require('autofill.context.lsp')
-local neighbors = require('autofill.context.neighbors')
+local registry = require('autofill.context.registry')
 
 local M = {}
+
+local function buffer_provider_data(ctx)
+  local provider = ctx.providers.buffer or {}
+  return {
+    before_cursor = provider.before or '',
+    after_cursor = provider.after or '',
+    is_truncated_before = provider.is_truncated_before,
+    is_truncated_after = provider.is_truncated_after,
+  }
+end
 
 function M.gather(bufnr, cursor, opts)
   opts = opts or {}
 
-  local buf_ctx = opts.buffer or buffer.get_text(bufnr, cursor)
-  local ts_ctx = treesitter.get_context(bufnr, cursor)
-  local lsp_ctx = lsp.get_context(bufnr, cursor)
-
-  -- Attach cached symbols to lsp context
-  local symbols = lsp.get_symbols(bufnr)
-  if symbols and #symbols > 0 then
-    if not lsp_ctx then
-      lsp_ctx = {}
-    end
-    lsp_ctx.symbols = symbols
-  end
-
-  local nb_ctx = neighbors.get_context(bufnr)
+  local collected = registry.collect(bufnr, cursor, opts)
+  local buf_ctx = buffer_provider_data(collected)
 
   return {
     filetype = vim.bo[bufnr].filetype,
     filename = vim.api.nvim_buf_get_name(bufnr),
-    before_cursor = buf_ctx.before,
-    after_cursor = buf_ctx.after,
+    providers = collected.providers,
+    provider_order = collected.provider_order,
+    revisions = collected.revisions,
+    before_cursor = buf_ctx.before_cursor,
+    after_cursor = buf_ctx.after_cursor,
     is_truncated_before = buf_ctx.is_truncated_before,
     is_truncated_after = buf_ctx.is_truncated_after,
-    treesitter = ts_ctx,
-    lsp = lsp_ctx,
-    neighbors = nb_ctx,
+    treesitter = collected.providers.treesitter,
+    lsp = collected.providers.lsp,
+    neighbors = collected.providers.neighbors,
   }
+end
+
+function M.get_revisions(bufnr, cursor, opts)
+  local collected = registry.collect_revisions(bufnr, cursor, opts)
+  return collected.revisions, collected.provider_order
+end
+
+function M.get_revision(bufnr, cursor, opts)
+  local revisions, provider_order = M.get_revisions(bufnr, cursor, opts)
+  return registry.compose_revision(revisions, provider_order)
 end
 
 return M

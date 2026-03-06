@@ -2,6 +2,12 @@ local M = {}
 
 M.SYSTEM_PROMPT = [[You are a code completion engine. Output ONLY the completion text that should be inserted at the cursor position. Do not include any explanation, markdown formatting, or code fences. Do not repeat the text before the cursor. Output only the new text to be inserted.]]
 
+local PROVIDER_FALLBACK_FIELDS = {
+  treesitter = 'treesitter',
+  lsp = 'lsp',
+  neighbors = 'neighbors',
+}
+
 local function trim_text(text, max_chars)
   text = tostring(text or '')
   max_chars = math.max(max_chars or 0, 0)
@@ -82,14 +88,36 @@ local function build_section(title, lines, max_chars, truncated)
   return header .. '\n' .. trim_text(body, available)
 end
 
-local function build_neighbors_section(ctx, prompt_config)
-  if not ctx.neighbors or #ctx.neighbors == 0 then
+local function get_provider_data(ctx, name)
+  if ctx.providers and ctx.providers[name] ~= nil then
+    return ctx.providers[name]
+  end
+
+  if name == 'buffer' then
+    return {
+      before = ctx.before_cursor or '',
+      after = ctx.after_cursor or '',
+      is_truncated_before = ctx.is_truncated_before,
+      is_truncated_after = ctx.is_truncated_after,
+    }
+  end
+
+  local field = PROVIDER_FALLBACK_FIELDS[name]
+  if field then
+    return ctx[field]
+  end
+
+  return nil
+end
+
+local function build_neighbors_section(neighbors_data, prompt_config)
+  if not neighbors_data or #neighbors_data == 0 then
     return nil
   end
 
   local lines = {}
   local truncated = false
-  for i, nb in ipairs(ctx.neighbors) do
+  for i, nb in ipairs(neighbors_data) do
     local content = tostring(nb.content or '')
     local file_truncated = nb.is_truncated == true
     if #content > prompt_config.max_neighbor_file_chars then
@@ -106,7 +134,7 @@ local function build_neighbors_section(ctx, prompt_config)
 
     lines[#lines + 1] = header
     lines[#lines + 1] = content
-    if i < #ctx.neighbors then
+    if i < #neighbors_data then
       lines[#lines + 1] = ''
     end
   end
@@ -114,16 +142,16 @@ local function build_neighbors_section(ctx, prompt_config)
   return build_section('Related files', lines, prompt_config.max_neighbors_chars, truncated)
 end
 
-local function build_outline_section(ctx, prompt_config)
-  if not ctx.lsp or not ctx.lsp.symbols or #ctx.lsp.symbols == 0 or prompt_config.max_symbol_count == 0 then
+local function build_outline_section(lsp_data, prompt_config)
+  if not lsp_data or not lsp_data.symbols or #lsp_data.symbols == 0 or prompt_config.max_symbol_count == 0 then
     return nil
   end
 
   local lines = {}
-  local count = math.min(prompt_config.max_symbol_count, #ctx.lsp.symbols)
-  local truncated = count < #ctx.lsp.symbols
+  local count = math.min(prompt_config.max_symbol_count, #lsp_data.symbols)
+  local truncated = count < #lsp_data.symbols
   for i = 1, count do
-    local sym = ctx.lsp.symbols[i]
+    local sym = lsp_data.symbols[i]
     local entry = '  ' .. sym.kind .. ' ' .. sym.name .. ' (line ' .. sym.line .. ')'
     if sym.container and sym.container ~= '' then
       entry = entry .. ' in ' .. sym.container
@@ -134,39 +162,39 @@ local function build_outline_section(ctx, prompt_config)
   return build_section('File outline', lines, prompt_config.max_outline_chars, truncated)
 end
 
-local function build_scope_section(ctx, prompt_config)
-  if not ctx.treesitter or not ctx.treesitter.scopes or #ctx.treesitter.scopes == 0 or prompt_config.max_scope_count == 0 then
+local function build_scope_section(treesitter_data, prompt_config)
+  if not treesitter_data or not treesitter_data.scopes or #treesitter_data.scopes == 0 or prompt_config.max_scope_count == 0 then
     return nil
   end
 
   local lines = {}
-  local count = math.min(prompt_config.max_scope_count, #ctx.treesitter.scopes)
-  local truncated = count < #ctx.treesitter.scopes
+  local count = math.min(prompt_config.max_scope_count, #treesitter_data.scopes)
+  local truncated = count < #treesitter_data.scopes
   for i = 1, count do
-    local scope = ctx.treesitter.scopes[i]
+    local scope = treesitter_data.scopes[i]
     lines[#lines + 1] = trim_text('  ' .. scope.type .. ' (line ' .. scope.line .. '): ' .. scope.header, 180)
   end
 
-  if ctx.treesitter.in_comment then
+  if treesitter_data.in_comment then
     lines[#lines + 1] = 'Cursor is inside a comment.'
   end
-  if ctx.treesitter.in_string then
+  if treesitter_data.in_string then
     lines[#lines + 1] = 'Cursor is inside a string.'
   end
 
   return build_section('Scope chain', lines, prompt_config.max_scope_chars, truncated)
 end
 
-local function build_diagnostics_section(ctx, prompt_config)
-  if not ctx.lsp or not ctx.lsp.diagnostics or #ctx.lsp.diagnostics == 0 or prompt_config.max_diagnostic_count == 0 then
+local function build_diagnostics_section(lsp_data, prompt_config)
+  if not lsp_data or not lsp_data.diagnostics or #lsp_data.diagnostics == 0 or prompt_config.max_diagnostic_count == 0 then
     return nil
   end
 
   local lines = {}
-  local count = math.min(prompt_config.max_diagnostic_count, #ctx.lsp.diagnostics)
-  local truncated = count < #ctx.lsp.diagnostics
+  local count = math.min(prompt_config.max_diagnostic_count, #lsp_data.diagnostics)
+  local truncated = count < #lsp_data.diagnostics
   for i = 1, count do
-    local d = ctx.lsp.diagnostics[i]
+    local d = lsp_data.diagnostics[i]
     local sev = ({ 'ERROR', 'WARN', 'INFO', 'HINT' })[d.severity] or 'INFO'
     lines[#lines + 1] = '  Line ' .. d.line .. ' [' .. sev .. ']: ' .. trim_text(d.message, 120)
   end
@@ -174,12 +202,12 @@ local function build_diagnostics_section(ctx, prompt_config)
   return build_section('Nearby diagnostics', lines, prompt_config.max_diagnostics_chars, truncated)
 end
 
-local function build_context_notes(ctx)
+local function build_context_notes(buffer_data)
   local lines = {}
-  if ctx.is_truncated_before then
+  if buffer_data and buffer_data.is_truncated_before then
     lines[#lines + 1] = 'Context before the cursor was truncated.'
   end
-  if ctx.is_truncated_after then
+  if buffer_data and buffer_data.is_truncated_after then
     lines[#lines + 1] = 'Context after the cursor was truncated.'
   end
 
@@ -190,6 +218,50 @@ local function build_context_notes(ctx)
   return build_section('Context notes', lines, 400, false)
 end
 
+local function build_section_entries(ctx, prompt_config)
+  local buffer_data = get_provider_data(ctx, 'buffer')
+  local treesitter_data = get_provider_data(ctx, 'treesitter')
+  local lsp_data = get_provider_data(ctx, 'lsp')
+  local neighbors_data = get_provider_data(ctx, 'neighbors')
+
+  return {
+    {
+      id = 'metadata',
+      required = true,
+      text = table.concat({
+        'File: ' .. (ctx.filename ~= '' and vim.fn.fnamemodify(ctx.filename, ':t') or 'unnamed'),
+        'Language: ' .. (ctx.filetype ~= '' and ctx.filetype or 'unknown'),
+      }, '\n'),
+    },
+    {
+      id = 'context_notes',
+      required = true,
+      text = build_context_notes(buffer_data),
+    },
+    {
+      id = 'neighbors',
+      text = build_neighbors_section(neighbors_data, prompt_config),
+    },
+    {
+      id = 'outline',
+      text = build_outline_section(lsp_data, prompt_config),
+    },
+    {
+      id = 'scope',
+      text = build_scope_section(treesitter_data, prompt_config),
+    },
+    {
+      id = 'diagnostics',
+      text = build_diagnostics_section(lsp_data, prompt_config),
+    },
+    {
+      id = 'cursor',
+      required = true,
+      text = (buffer_data and buffer_data.before or ctx.before_cursor or '') .. '<CURSOR>' .. (buffer_data and buffer_data.after or ctx.after_cursor or ''),
+    },
+  }
+end
+
 function M.build_user_message(ctx)
   if ctx._user_message then
     return ctx._user_message
@@ -198,25 +270,23 @@ function M.build_user_message(ctx)
   local config = require('autofill.config').get()
   local prompt_config = config.prompt
 
-  local prefix_sections = {
-    table.concat({
-      'File: ' .. (ctx.filename ~= '' and vim.fn.fnamemodify(ctx.filename, ':t') or 'unnamed'),
-      'Language: ' .. (ctx.filetype ~= '' and ctx.filetype or 'unknown'),
-    }, '\n'),
-  }
+  local sections = build_section_entries(ctx, prompt_config)
 
-  local context_notes = build_context_notes(ctx)
-  if context_notes then
-    prefix_sections[#prefix_sections + 1] = context_notes
+  local prefix_sections = {}
+  local optional_sections = {}
+  local cursor_section = ''
+
+  for _, section in ipairs(sections) do
+    if section.text and section.text ~= '' then
+      if section.id == 'cursor' then
+        cursor_section = section.text
+      elseif section.required then
+        prefix_sections[#prefix_sections + 1] = section.text
+      else
+        optional_sections[#optional_sections + 1] = section.text
+      end
+    end
   end
-
-  local cursor_section = ctx.before_cursor .. '<CURSOR>' .. ctx.after_cursor
-  local optional_sections = {
-    build_neighbors_section(ctx, prompt_config),
-    build_outline_section(ctx, prompt_config),
-    build_scope_section(ctx, prompt_config),
-    build_diagnostics_section(ctx, prompt_config),
-  }
 
   local function render_with(optional)
     local sections = vim.list_extend(vim.deepcopy(prefix_sections), optional)

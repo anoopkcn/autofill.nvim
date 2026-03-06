@@ -115,10 +115,7 @@ local function do_complete(snapshot)
     bufnr = bufnr,
     row = cursor[1],
     filetype = filetype,
-    context_revision = table.concat({
-      lsp_context.get_revision(bufnr),
-      neighbors_context.get_revision(bufnr),
-    }, ':'),
+    context_revision = context.get_revision(bufnr, cursor, { buffer = buf_ctx }),
     before_cursor = buf_ctx.before,
     after_cursor = buf_ctx.after,
   })
