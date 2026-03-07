@@ -92,6 +92,7 @@ function M.scope(config)
   local treesitter = config.treesitter or {}
   local lsp = config.lsp or {}
   local prompt_config = config.prompt or {}
+  local temperature = config.temperature or {}
 
   local parts = {
     backend_name,
@@ -137,6 +138,14 @@ function M.scope(config)
     tostring(prompt_config.max_scope_count or ''),
     ':',
     tostring(prompt_config.max_diagnostic_count or ''),
+    ':',
+    tostring(prompt_config.mode or ''),
+    ':',
+    table.concat(prompt_config.prose_filetypes or {}, '\0'),
+    ':',
+    tostring(temperature.code or ''),
+    ':',
+    tostring(temperature.prose or ''),
   }
 
   local result = hash(table.concat(parts))
@@ -146,8 +155,8 @@ function M.scope(config)
 end
 
 function M.key(ctx, scope)
-  local message = prompt.build_user_message(ctx)
-  return hash((scope or '') .. ':' .. prompt.SYSTEM_PROMPT .. '\0' .. message)
+  local request = prompt.build_request(ctx)
+  return hash((scope or '') .. ':' .. request.system_prompt .. '\0' .. request.user_message)
 end
 
 function M.quick_key(opts)

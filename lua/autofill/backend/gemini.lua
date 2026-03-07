@@ -64,8 +64,9 @@ function M.complete(ctx, opts)
     return
   end
 
-  local user_message = prompt.build_user_message(ctx)
-  util.log('debug', 'Gemini prompt prepared (' .. #user_message .. ' chars)')
+  local prompt_request = prompt.build_request(ctx)
+  local user_message = prompt_request.user_message
+  util.log('debug', 'Gemini prompt prepared (' .. #user_message .. ' chars, mode=' .. prompt_request.mode .. ')')
 
   local use_stream = config.streaming_display
   local url = 'https://generativelanguage.googleapis.com/v1beta/models/'
@@ -75,6 +76,13 @@ function M.complete(ctx, opts)
   local state = { parts = {}, text = '', dirty = false }
   local on_partial = opts.on_partial
 
+  local generation_config = {
+    maxOutputTokens = config.max_tokens,
+  }
+  if prompt_request.temperature ~= nil then
+    generation_config.temperature = prompt_request.temperature
+  end
+
   request.send({
     url = url,
     headers = {
@@ -83,7 +91,7 @@ function M.complete(ctx, opts)
     },
     body = {
       systemInstruction = {
-        parts = { { text = prompt.SYSTEM_PROMPT } },
+        parts = { { text = prompt_request.system_prompt } },
       },
       contents = {
         {
@@ -91,9 +99,7 @@ function M.complete(ctx, opts)
           parts = { { text = user_message } },
         },
       },
-      generationConfig = {
-        maxOutputTokens = config.max_tokens,
-      },
+      generationConfig = generation_config,
     },
     timeout_ms = gemini_config.timeout_ms,
     stream = use_stream,

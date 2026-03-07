@@ -27,8 +27,12 @@ return function()
       { filename = 'neighbor.lua', content = 'return two' },
     },
   })
+  local prose_ctx = vim.tbl_deep_extend('force', {}, base_ctx, {
+    filetype = 'markdown',
+  })
 
   assert(cache.key(ctx1, scope) ~= cache.key(ctx2, scope), 'cache key should change when prompt-relevant neighbor content changes')
+  assert(cache.key(base_ctx, scope) ~= cache.key(prose_ctx, scope), 'cache key should change when the resolved system prompt changes')
 
   local quick1 = cache.quick_key({
     scope = scope,
@@ -145,6 +149,59 @@ return function()
   })
   local blablador_scope_two = cache.scope(config.get())
   assert(blablador_scope_one ~= blablador_scope_two, 'cache scope should change when backend base_url changes')
+
+  config.setup({
+    enabled = false,
+    prompt = {
+      mode = 'auto',
+    },
+  })
+  local prompt_mode_auto_scope = cache.scope(config.get())
+
+  config.setup({
+    enabled = false,
+    prompt = {
+      mode = 'code',
+    },
+  })
+  local prompt_mode_code_scope = cache.scope(config.get())
+  assert(prompt_mode_auto_scope ~= prompt_mode_code_scope, 'cache scope should change when prompt mode changes')
+
+  config.setup({
+    enabled = false,
+    prompt = {
+      prose_filetypes = { 'markdown', 'text', 'gitcommit', 'rst', 'asciidoc' },
+    },
+  })
+  local prose_filetypes_scope_one = cache.scope(config.get())
+
+  config.setup({
+    enabled = false,
+    prompt = {
+      prose_filetypes = { 'markdown', 'gitcommit' },
+    },
+  })
+  local prose_filetypes_scope_two = cache.scope(config.get())
+  assert(prose_filetypes_scope_one ~= prose_filetypes_scope_two, 'cache scope should change when prompt prose filetypes change')
+
+  config.setup({
+    enabled = false,
+    temperature = {
+      code = 0.1,
+      prose = nil,
+    },
+  })
+  local temperature_scope_one = cache.scope(config.get())
+
+  config.setup({
+    enabled = false,
+    temperature = {
+      code = 0.2,
+      prose = 0.7,
+    },
+  })
+  local temperature_scope_two = cache.scope(config.get())
+  assert(temperature_scope_one ~= temperature_scope_two, 'cache scope should change when temperature settings change')
 
   local lsp_context = require('autofill.context.lsp')
   local neighbors_context = require('autofill.context.neighbors')

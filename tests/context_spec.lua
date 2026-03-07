@@ -84,6 +84,7 @@ return function()
     col = 16,
   })
   local gathered = context.gather(gather_bufnr, { 1, 16 })
+  local request_data = prompt.build_request(gathered)
   local message = prompt.build_user_message(gathered)
   assert(vim.deep_equal(gathered.provider_order, {
     'buffer',
@@ -98,12 +99,16 @@ return function()
   assert(gathered.providers.neighbors == gathered.neighbors, 'gather should preserve legacy neighbor fields from provider output')
   assert(message:find('File: sample.lua', 1, true), 'prompt should include the current filename')
   assert(message:find('Language: lua', 1, true), 'prompt should include the current filetype')
+  assert(message:find('Task: Continue the current code at <CURSOR>.', 1, true), 'prompt should include the code task guidance')
   assert(message:find('Related files:\n--- helper.lua ---\nreturn 1', 1, true), 'prompt should include neighbor file snapshots')
   assert(message:find('Scope chain:\n  function_declaration %(line 3%): local function demo%(%)'), 'prompt should include Treesitter scopes')
   assert(message:find('Cursor is inside a string.', 1, true), 'prompt should include Treesitter semantic hints')
   assert(not message:find('File outline:', 1, true), 'prompt should omit LSP symbols when LSP context is disabled')
   assert(not message:find('Nearby diagnostics:', 1, true), 'prompt should omit diagnostics when LSP context is disabled')
   assert(message:find('local example = <CURSOR>', 1, true), 'prompt should include the cursor marker')
+  assert(request_data.mode == 'code', 'prompt should stay in code mode for generic string literals')
+  assert(request_data.system_prompt == prompt.SYSTEM_PROMPTS.code, 'prompt should use the code system prompt for code-mode completions')
+  assert(request_data.temperature == 0.1, 'prompt should resolve the default code temperature')
   local related_pos = assert(message:find('Related files:', 1, true))
   local scope_pos = assert(message:find('Scope chain:', 1, true))
   local cursor_pos = assert(message:find('local example = <CURSOR>', 1, true))
@@ -194,6 +199,8 @@ return function()
     },
   })
   assert(#tight_message <= 700, 'prompt should honor the configured overall character budget')
+  assert(tight_message:find('Task: Continue the current prose/comment at <CURSOR>.', 1, true),
+    'prompt should switch task guidance when prose mode is selected')
   assert(tight_message:find('Context notes:\nContext before the cursor was truncated.\nContext after the cursor was truncated.', 1, true), 'prompt should signal truncated surrounding buffer context')
   assert(tight_message:find('Related files %(truncated%):'), 'prompt should signal truncated related-file context')
   assert(tight_message:find('%-%-%- neighbor%.lua %(truncated%) %-%-%-'), 'prompt should signal per-file neighbor truncation')
@@ -201,6 +208,44 @@ return function()
   assert(tight_message:find('File outline %(truncated%):'), 'prompt should signal truncated outline sections')
   assert(tight_message:find('Scope chain %(truncated%):'), 'prompt should signal truncated scope sections')
   assert(tight_message:find('Nearby diagnostics %(truncated%):'), 'prompt should signal truncated diagnostics sections')
+
+  local prose_comment_request = prompt.build_request({
+    filename = '/tmp/comment.lua',
+    filetype = 'lua',
+    before_cursor = '-- hello ',
+    after_cursor = '',
+    treesitter = {
+      in_comment = true,
+      in_string = false,
+      scopes = {},
+    },
+  })
+  assert(prose_comment_request.mode == 'prose', 'prompt should switch to prose mode for comment completions')
+  assert(prose_comment_request.system_prompt == prompt.SYSTEM_PROMPTS.prose, 'prompt should use the prose system prompt in prose mode')
+  assert(prose_comment_request.temperature == nil, 'prompt should omit prose temperature by default')
+  assert(prose_comment_request.user_message:find('Task: Continue the current prose/comment at <CURSOR>.', 1, true),
+    'prompt should include prose task guidance for comment completions')
+
+  local prose_filetype_request = prompt.build_request({
+    filename = '/tmp/notes.md',
+    filetype = 'markdown',
+    before_cursor = 'Draft: ',
+    after_cursor = '',
+  })
+  assert(prose_filetype_request.mode == 'prose', 'prompt should switch to prose mode for configured prose filetypes')
+
+  local string_request = prompt.build_request({
+    filename = '/tmp/example.lua',
+    filetype = 'lua',
+    before_cursor = 'local message = "',
+    after_cursor = '"',
+    treesitter = {
+      in_comment = false,
+      in_string = true,
+      scopes = {},
+    },
+  })
+  assert(string_request.mode == 'code', 'prompt should keep generic string literals in code mode')
 
   treesitter_context.get_context = original_ts_get_context
   lsp_context.get_context = original_lsp_get_context

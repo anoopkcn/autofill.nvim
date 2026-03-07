@@ -32,7 +32,7 @@ CI (`.github/workflows/ci.yml`) runs both the syntax check and headless tests on
 
 3. **Context** (`context/`) — Provider-based system via `context/registry.lua`. Four built-in providers run in order: buffer, treesitter, lsp, neighbors. Treesitter is enabled by default but can be disabled with `treesitter.enabled = false`. The LSP provider is disabled by default and only contributes when `lsp.enabled = true`. Each provider has `collect()` and optional `revision()`. The registry collects all provider data into a single context object.
 
-4. **Prompt** (`backend/prompt.lua`) — Shared across all backends. Builds a user message from context with budget-aware section fitting (neighbors, outline, scopes, diagnostics, cursor text). Sections are added greedily up to `prompt.max_chars`.
+4. **Prompt** (`backend/prompt.lua`) — Shared across all backends. Resolves `code` vs `prose` mode per request, picks the matching system prompt and temperature, and builds a user message from context with budget-aware section fitting (neighbors, outline, scopes, diagnostics, cursor text). Sections are added greedily up to `prompt.max_chars`.
 
 5. **Backend** (`backend/init.lua` dispatches to `backend/{claude,gemini,openai,blablador}.lua`) — Each backend formats the prompt into its API's request shape. Response text passes through `sanitize.lua` (strips code fences, trims overlap with surrounding code).
 

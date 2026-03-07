@@ -62,12 +62,26 @@ function M.complete(ctx, opts)
     return
   end
 
-  local user_message = prompt.build_user_message(ctx)
-  util.log('debug', 'Claude prompt prepared (' .. #user_message .. ' chars)')
+  local prompt_request = prompt.build_request(ctx)
+  local user_message = prompt_request.user_message
+  util.log('debug', 'Claude prompt prepared (' .. #user_message .. ' chars, mode=' .. prompt_request.mode .. ')')
 
   local use_stream = config.streaming_display
   local state = { parts = {}, text = '', dirty = false }
   local on_partial = opts.on_partial
+
+  local body = {
+    model = claude_config.model,
+    max_tokens = config.max_tokens,
+    stream = use_stream,
+    system = prompt_request.system_prompt,
+    messages = {
+      { role = 'user', content = user_message },
+    },
+  }
+  if prompt_request.temperature ~= nil then
+    body.temperature = prompt_request.temperature
+  end
 
   request.send({
     url = 'https://api.anthropic.com/v1/messages',
@@ -76,15 +90,7 @@ function M.complete(ctx, opts)
       ['x-api-key'] = api_key,
       ['anthropic-version'] = '2023-06-01',
     },
-    body = {
-      model = claude_config.model,
-      max_tokens = config.max_tokens,
-      stream = use_stream,
-      system = prompt.SYSTEM_PROMPT,
-      messages = {
-        { role = 'user', content = user_message },
-      },
-    },
+    body = body,
     timeout_ms = claude_config.timeout_ms,
     stream = use_stream,
     session_key = opts.request_session_key,

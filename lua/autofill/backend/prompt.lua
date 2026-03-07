@@ -1,6 +1,11 @@
 local M = {}
 
-M.SYSTEM_PROMPT = [[You are a code completion engine. Output ONLY the completion text that should be inserted at the cursor position. Do not include any explanation, markdown formatting, or code fences. Do not repeat the text before the cursor. Output only the new text to be inserted.]]
+M.SYSTEM_PROMPTS = {
+  code = [[You are a code completion engine. Continue the code at the cursor. Preserve syntax, indentation, naming, and local style. Fit the completion to both the text before and after the cursor. Output ONLY the text that should be inserted at the cursor. Do not include explanations, markdown, or code fences. Do not repeat the text before the cursor.]],
+  prose = [[You are a prose completion engine. Continue the prose or comment at the cursor. Preserve tone, formatting, and local style. Fit the completion to both the text before and after the cursor. Output ONLY the text that should be inserted at the cursor. Do not include explanations, markdown, or code fences. Do not repeat the text before the cursor.]],
+}
+
+M.SYSTEM_PROMPT = M.SYSTEM_PROMPTS.code
 
 local PROVIDER_FALLBACK_FIELDS = {
   treesitter = 'treesitter',
@@ -218,7 +223,43 @@ local function build_context_notes(buffer_data)
   return build_section('Context notes', lines, 400, false)
 end
 
-local function build_section_entries(ctx, prompt_config)
+local function build_task_section(mode)
+  local task = 'Task: Continue the current code at <CURSOR>.'
+  if mode == 'prose' then
+    task = 'Task: Continue the current prose/comment at <CURSOR>.'
+  end
+  return task
+end
+
+local function prose_filetype(prompt_config, filetype)
+  filetype = tostring(filetype or '')
+  for _, prose_filetype in ipairs(prompt_config.prose_filetypes or {}) do
+    if prose_filetype == filetype then
+      return true
+    end
+  end
+  return false
+end
+
+local function resolve_mode_with_config(ctx, prompt_config)
+  local mode = prompt_config.mode or 'auto'
+  if mode == 'code' or mode == 'prose' then
+    return mode
+  end
+
+  if prose_filetype(prompt_config, ctx.filetype) then
+    return 'prose'
+  end
+
+  local treesitter_data = get_provider_data(ctx, 'treesitter')
+  if treesitter_data and treesitter_data.in_comment then
+    return 'prose'
+  end
+
+  return 'code'
+end
+
+local function build_section_entries(ctx, prompt_config, mode)
   local buffer_data = get_provider_data(ctx, 'buffer')
   local treesitter_data = get_provider_data(ctx, 'treesitter')
   local lsp_data = get_provider_data(ctx, 'lsp')
@@ -232,6 +273,11 @@ local function build_section_entries(ctx, prompt_config)
         'File: ' .. (ctx.filename ~= '' and vim.fn.fnamemodify(ctx.filename, ':t') or 'unnamed'),
         'Language: ' .. (ctx.filetype ~= '' and ctx.filetype or 'unknown'),
       }, '\n'),
+    },
+    {
+      id = 'task',
+      required = true,
+      text = build_task_section(mode),
     },
     {
       id = 'context_notes',
@@ -262,21 +308,14 @@ local function build_section_entries(ctx, prompt_config)
   }
 end
 
-function M.build_user_message(ctx)
-  if ctx._user_message then
-    return ctx._user_message
-  end
-
-  local config = require('autofill.config').get()
-  local prompt_config = config.prompt
-
-  local sections = build_section_entries(ctx, prompt_config)
+local function build_user_message_with_config(ctx, prompt_config, mode)
+  local sections = build_section_entries(ctx, prompt_config, mode)
 
   local final_parts = {}
   local optional_sections = {}
   local cursor_section = ''
   local running_len = 0
-  local separator_len = 2  -- '\n\n' between sections
+  local separator_len = 2
 
   for _, section in ipairs(sections) do
     if section.text and section.text ~= '' then
@@ -295,7 +334,6 @@ function M.build_user_message(ctx)
   end
 
   for _, section in ipairs(optional_sections) do
-    -- Account for two separators: one before this section and one before cursor
     local base_len = running_len + separator_len + #cursor_section + separator_len
     local remaining = prompt_config.max_chars - base_len
     if remaining > 2 then
@@ -308,8 +346,33 @@ function M.build_user_message(ctx)
   end
 
   final_parts[#final_parts + 1] = cursor_section
-  ctx._user_message = join_sections(final_parts)
-  return ctx._user_message
+  return join_sections(final_parts)
+end
+
+function M.resolve_mode(ctx, prompt_config)
+  if prompt_config == nil then
+    prompt_config = require('autofill.config').get().prompt or {}
+  end
+  return resolve_mode_with_config(ctx or {}, prompt_config)
+end
+
+function M.build_user_message(ctx, mode)
+  local prompt_config = require('autofill.config').get().prompt or {}
+  return build_user_message_with_config(ctx, prompt_config, mode or resolve_mode_with_config(ctx or {}, prompt_config))
+end
+
+function M.build_request(ctx)
+  local config = require('autofill.config').get()
+  local prompt_config = config.prompt or {}
+  local mode = resolve_mode_with_config(ctx or {}, prompt_config)
+  local temperature_config = config.temperature or {}
+
+  return {
+    mode = mode,
+    system_prompt = M.SYSTEM_PROMPTS[mode] or M.SYSTEM_PROMPTS.code,
+    user_message = build_user_message_with_config(ctx, prompt_config, mode),
+    temperature = temperature_config[mode],
+  }
 end
 
 return M

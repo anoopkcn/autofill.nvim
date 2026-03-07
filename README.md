@@ -70,6 +70,9 @@ require("autofill").setup({
   backend = "gemini",
   model = "gemini-2.5-flash",
   log_level = "warn",
+  temperature = {
+    code = 0.1,
+  },
   keymaps = {
     accept = "<Tab>",
     accept_word = "<C-l>",
@@ -126,6 +129,23 @@ require("autofill").setup({
   lsp = {
     enabled = false,
   },
+  prompt = {
+    max_chars = 12000,
+    max_neighbors_chars = 2500,
+    max_neighbor_file_chars = 900,
+    max_outline_chars = 1200,
+    max_scope_chars = 900,
+    max_diagnostics_chars = 600,
+    max_symbol_count = 15,
+    max_scope_count = 8,
+    max_diagnostic_count = 5,
+    mode = "auto",
+    prose_filetypes = { "markdown", "text", "gitcommit", "rst", "asciidoc" },
+  },
+  temperature = {
+    code = 0.1,
+    prose = nil,
+  },
   filetypes_exclude = {},
   keymaps = {
     accept = nil,
@@ -161,6 +181,10 @@ Important options:
 - `backend`: `blablador`, `claude`, `gemini`, or `openai`
 - `model`: optional shorthand for the selected backend's model; when set, it overrides `openai.model`, `claude.model`, `gemini.model`, or `blablador.model` for the active backend
 - `streaming_display`: use streaming ghost updates when `true`; use a real non-streaming backend request when `false`
+- `prompt.mode`: choose `auto`, `code`, or `prose`; `auto` switches to prose instructions for configured prose filetypes and comment contexts
+- `prompt.prose_filetypes`: filetypes that should use prose-oriented prompt instructions when `prompt.mode = "auto"`
+- `temperature.code`: default `0.1`; lowers randomness for code-mode completions
+- `temperature.prose`: optional prose-mode override; when `nil`, the backend keeps its own default temperature
 - `profiling`: include timing output in `:Autofill test`
 - `filetypes_exclude`: disable the plugin for specific filetypes
 - `neighbors.enabled`: include nearby file snapshots in the prompt
@@ -197,6 +221,20 @@ Enable LSP-backed context explicitly if you want the previous behavior:
 require("autofill").setup({
   lsp = {
     enabled = true,
+  },
+})
+```
+
+Force prose mode or tune temperatures explicitly if you want behavior that differs from the defaults:
+
+```lua
+require("autofill").setup({
+  prompt = {
+    mode = "prose",
+  },
+  temperature = {
+    code = 0.05,
+    prose = 0.7,
   },
 })
 ```

@@ -7,6 +7,12 @@ local VALID_LOG_LEVELS = {
   error = true,
 }
 
+local VALID_PROMPT_MODES = {
+  auto = true,
+  code = true,
+  prose = true,
+}
+
 local SUPPORTED_BACKEND_DEFAULTS = {
   blablador = {
     api_key_env = 'BLABLADOR_API_KEY',
@@ -70,6 +76,12 @@ M.defaults = {
     max_symbol_count = 15,
     max_scope_count = 8,
     max_diagnostic_count = 5,
+    mode = 'auto',
+    prose_filetypes = { 'markdown', 'text', 'gitcommit', 'rst', 'asciidoc' },
+  },
+  temperature = {
+    code = 0.1,
+    prose = nil,
   },
   filetypes_exclude = {},
   keymaps = {
@@ -109,6 +121,16 @@ end
 local function validate_optional_string(value, key, errors)
   if value ~= nil and (type(value) ~= 'string' or value == '') then
     errors[#errors + 1] = key .. ' must be a non-empty string or nil'
+  end
+end
+
+local function validate_optional_temperature(value, key, errors)
+  if value == nil then
+    return
+  end
+
+  if type(value) ~= 'number' or value < 0 or value > 1 then
+    errors[#errors + 1] = key .. ' must be a number between 0 and 1 or nil'
   end
 end
 
@@ -282,6 +304,19 @@ function M.inspect(options)
     if not is_non_negative_integer(options.prompt.max_diagnostic_count) then
       errors[#errors + 1] = 'prompt.max_diagnostic_count must be a non-negative integer'
     end
+
+    if not VALID_PROMPT_MODES[options.prompt.mode] then
+      errors[#errors + 1] = 'prompt.mode must be one of: auto, code, prose'
+    end
+
+    validate_string_list(options.prompt.prose_filetypes, 'prompt.prose_filetypes', errors)
+  end
+
+  if type(options.temperature) ~= 'table' then
+    errors[#errors + 1] = 'temperature must be a table'
+  else
+    validate_optional_temperature(options.temperature.code, 'temperature.code', errors)
+    validate_optional_temperature(options.temperature.prose, 'temperature.prose', errors)
   end
 
   for _, backend_name in ipairs(backend.supported_backends()) do

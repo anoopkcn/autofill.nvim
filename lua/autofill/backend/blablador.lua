@@ -117,12 +117,26 @@ function M.complete(ctx, opts)
     return
   end
 
-  local user_message = prompt.build_user_message(ctx)
-  util.log('debug', 'Blablador prompt prepared (' .. #user_message .. ' chars)')
+  local prompt_request = prompt.build_request(ctx)
+  local user_message = prompt_request.user_message
+  util.log('debug', 'Blablador prompt prepared (' .. #user_message .. ' chars, mode=' .. prompt_request.mode .. ')')
 
   local use_stream = config.streaming_display
   local state = { parts = {}, text = '', dirty = false }
   local on_partial = opts.on_partial
+
+  local body = {
+    model = blablador_config.model,
+    messages = {
+      { role = 'system', content = prompt_request.system_prompt },
+      { role = 'user', content = user_message },
+    },
+    max_tokens = config.max_tokens,
+    stream = use_stream,
+  }
+  if prompt_request.temperature ~= nil then
+    body.temperature = prompt_request.temperature
+  end
 
   request.send({
     url = normalize_base_url(blablador_config.base_url) .. '/chat/completions',
@@ -130,15 +144,7 @@ function M.complete(ctx, opts)
       ['content-type'] = 'application/json',
       ['authorization'] = 'Bearer ' .. api_key,
     },
-    body = {
-      model = blablador_config.model,
-      messages = {
-        { role = 'system', content = prompt.SYSTEM_PROMPT },
-        { role = 'user', content = user_message },
-      },
-      max_tokens = config.max_tokens,
-      stream = use_stream,
-    },
+    body = body,
     timeout_ms = blablador_config.timeout_ms,
     stream = use_stream,
     session_key = opts.request_session_key,

@@ -72,6 +72,12 @@ return function()
           },
           prompt = {
             max_chars = 12000,
+            mode = 'auto',
+            prose_filetypes = { 'markdown', 'text' },
+          },
+          temperature = {
+            code = 0.1,
+            prose = nil,
           },
           keymaps = {
             accept = '<Tab>',
@@ -106,6 +112,11 @@ return function()
   assert(ok_run, 'health check should succeed for a valid configuration: ' .. tostring(err))
   assert(find_message(messages, 'info', 'Configured backend: openai'), 'health check should report the configured backend')
   assert(find_message(messages, 'info', 'Configured model: gpt-5-mini'), 'health check should report the active backend model')
+  assert(find_message(messages, 'info', 'Prompt mode: auto'), 'health check should report prompt mode')
+  assert(find_message(messages, 'info', 'Prompt prose filetypes: { "markdown", "text" }'),
+    'health check should report prompt prose filetypes')
+  assert(find_message(messages, 'info', 'Temperature config: { code = 0.1 }'),
+    'health check should report temperature configuration')
   assert(not find_message(messages, 'info', 'Configured model: claude-haiku-4-5-20251001'),
     'health check should not report the model from an inactive backend')
 
@@ -115,6 +126,7 @@ return function()
         return {
           backend = 'openai',
           prompt = {},
+          temperature = {},
           keymaps = {},
         }
       end,
@@ -151,6 +163,10 @@ return function()
     'health check should continue reporting validation failures')
   assert(find_message(messages, 'info', 'Configured model: unavailable'),
     'health check should report an unavailable model when the backend config is malformed')
+  assert(find_message(messages, 'info', 'Prompt mode: unavailable'),
+    'health check should report unavailable prompt mode for malformed prompt config')
+  assert(find_message(messages, 'info', 'Prompt prose filetypes: unavailable'),
+    'health check should report unavailable prose filetypes for malformed prompt config')
 
   config.setup({
     enabled = false,

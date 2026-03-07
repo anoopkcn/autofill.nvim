@@ -32,6 +32,42 @@ local function configured_model(options)
   return model
 end
 
+local function compact_inspect(value)
+  return vim.inspect(value):gsub('%s+', ' '):gsub('^ ', ''):gsub(' $', '')
+end
+
+local function prompt_mode(options)
+  local prompt = type(options) == 'table' and options.prompt or nil
+  if type(prompt) ~= 'table' then
+    return 'unavailable'
+  end
+
+  local mode = prompt.mode
+  if type(mode) ~= 'string' or mode == '' then
+    return 'unavailable'
+  end
+
+  return mode
+end
+
+local function prose_filetypes(options)
+  local prompt = type(options) == 'table' and options.prompt or nil
+  if type(prompt) ~= 'table' or type(prompt.prose_filetypes) ~= 'table' then
+    return 'unavailable'
+  end
+
+  return compact_inspect(prompt.prose_filetypes)
+end
+
+local function temperature_config(options)
+  local temperature = type(options) == 'table' and options.temperature or nil
+  if type(temperature) ~= 'table' then
+    return 'unavailable'
+  end
+
+  return compact_inspect(temperature)
+end
+
 function M.check()
   local config = require('autofill.config')
   local backend = require('autofill.backend')
@@ -65,7 +101,10 @@ function M.check()
   info('Supported backends: ' .. table.concat(backend.supported_backends(), ', '))
   info('Configured backend: ' .. options.backend)
   info('Configured model: ' .. configured_model(options))
+  info('Prompt mode: ' .. prompt_mode(options))
+  info('Prompt prose filetypes: ' .. prose_filetypes(options))
   info('Prompt limits: ' .. vim.inspect(options.prompt))
+  info('Temperature config: ' .. temperature_config(options))
   info('Direct keymaps: ' .. vim.inspect(options.keymaps))
   info('Plug mappings: ' .. vim.inspect(ghost.get_plug_mappings()))
 end
