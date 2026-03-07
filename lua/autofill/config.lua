@@ -354,6 +354,12 @@ function M.setup(opts)
   normalize_model_override(merged)
   M.validate(merged)
   M.options = merged
+
+  local exclude_set = {}
+  for _, ft in ipairs(M.options.filetypes_exclude) do
+    exclude_set[ft] = true
+  end
+  M.options._filetypes_exclude_set = exclude_set
 end
 
 function M.get()

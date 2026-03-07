@@ -394,8 +394,6 @@ function M.advance(bufnr)
     state.line = row
     state.col = col
     state.text = remainder
-    -- Clear old extmark and render new one
-    vim.api.nvim_buf_clear_namespace(bufnr, ns, 0, -1)
     render_state(state)
     state.last_render_time = vim.uv.now()
     return true

@@ -90,9 +90,8 @@ function M.complete(ctx, opts)
 
   if opts.on_partial then
     wrapped_opts.on_partial = function(text)
-      local suggestion = sanitize.suggestion(ctx, text)
-      if suggestion ~= '' then
-        opts.on_partial(suggestion)
+      if text and text ~= '' then
+        opts.on_partial(text)
       end
     end
   end

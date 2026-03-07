@@ -53,7 +53,7 @@ return function()
     end,
   })
 
-  assert(#partials == 1 and partials[1] == '41', 'backend.complete() should sanitize streamed partial output')
+  assert(#partials == 1 and partials[1] == '```lua\nlocal value = 41', 'backend.complete() should pass through non-empty partial output without sanitizing')
   assert(final == '41', 'backend.complete() should sanitize completed output before forwarding it')
 
   final = false

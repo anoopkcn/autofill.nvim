@@ -47,10 +47,13 @@ local function get_entry(store, order, key)
 end
 
 local function set_entry(store, order, key, value, meta)
+  local existing = store[key]
   local now = vim.uv.now()
   store[key] = { value = value, time = now, meta = meta }
 
-  remove_from_order(order, key)
+  if existing then
+    remove_from_order(order, key)
+  end
   table.insert(order, key)
 
   while #order > max_entries do
@@ -156,6 +159,10 @@ end
 
 function M.key(ctx, scope)
   local request = prompt.build_request(ctx)
+  return hash((scope or '') .. ':' .. request.system_prompt .. '\0' .. request.user_message)
+end
+
+function M.key_from_request(request, scope)
   return hash((scope or '') .. ':' .. request.system_prompt .. '\0' .. request.user_message)
 end
 

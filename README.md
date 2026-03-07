@@ -1,6 +1,6 @@
 # autofill.nvim
 
-AI-assisted ghost-text autocompletion for Neovim.
+AI-assisted ghost-text autocompletion for Neovim. 
 
 `autofill.nvim` watches insert-mode edits, builds a compact prompt from the current buffer plus nearby context, and renders model output inline as ghost text. Suggestions can be accepted, partially accepted, or ignored while you keep typing.
 
@@ -36,21 +36,13 @@ AI-assisted ghost-text autocompletion for Neovim.
 
 Install the plugin with your plugin manager of choice. Replace the source with your repository path or local checkout.
 
-Example with `lazy.nvim`:
+Example with `vim.pack` thr native package manager:
 
 ```lua
-{
-  dir = "/path/to/autofill.nvim",
-  config = function()
-    require("autofill").setup({
-      backend = "gemini",
-      keymaps = {
-        accept = "<Tab>",
-      },
-    })
-  end,
-}
+vim.pack.add(src="https://github.com/anoopkcn/autofill.nvim", name="autofill")
+require("autofill").setup()
 ```
+**No keymap is set by default. See the "Quick Start" section for examples of how to configure keymaps.**
 
 ## Quick Start
 
@@ -59,7 +51,9 @@ Minimum setup:
 ```lua
 require("autofill").setup({
   backend = "claude",
-  model = "claude-haiku-4-5-20251001",
+  keymaps = {
+    accept = "<Tab>",
+  },
 })
 ```
 

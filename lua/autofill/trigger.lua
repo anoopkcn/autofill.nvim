@@ -7,6 +7,8 @@ local treesitter_context = require('autofill.context.treesitter')
 local backend = require('autofill.backend')
 local request = require('autofill.transport.request')
 local cache = require('autofill.cache')
+local prompt = require('autofill.backend.prompt')
+local sanitize = require('autofill.sanitize')
 local profiler = require('autofill.profiler')
 local util = require('autofill.util')
 
@@ -136,7 +138,8 @@ local function do_complete(snapshot)
   local ctx = context.gather(bufnr, cursor, { buffer = buf_ctx })
   profiler.mark(snapshot.profile, 'context_ready')
 
-  local cache_key = cache.key(ctx, cache_scope)
+  local prompt_request = prompt.build_request(ctx)
+  local cache_key = cache.key_from_request(prompt_request, cache_scope)
   local cached = cache.get(cache_key)
   if cached then
     cache.set_quick(quick_key, cached, { bufnr = bufnr })
@@ -150,6 +153,7 @@ local function do_complete(snapshot)
 
   local opts = {
     request_session_key = bufnr,
+    prompt_request = prompt_request,
     on_complete = function(suggestion)
       if get_session(bufnr) ~= session then return end
       if session.active_request_seq == snapshot.seq then
@@ -169,10 +173,13 @@ local function do_complete(snapshot)
       if not snapshot_is_current(snapshot) then return end
       if not first_partial and vim.uv.now() - session.last_input_time < PARTIAL_IDLE_MS then return end
 
+      local suggestion = sanitize.suggestion(ctx, text_so_far)
+      if suggestion == '' then return end
+
       first_partial = false
       profiler.mark(snapshot.profile, 'first_partial')
       vim.schedule(function()
-        show_suggestion(snapshot, text_so_far, true)
+        show_suggestion(snapshot, suggestion, true)
       end)
     end
   end
@@ -250,9 +257,7 @@ local function on_text_changed()
   local ft = vim.bo[bufnr].filetype
 
   -- Check filetype exclusion
-  for _, excluded in ipairs(config.filetypes_exclude) do
-    if ft == excluded then return end
-  end
+  if config._filetypes_exclude_set and config._filetypes_exclude_set[ft] then return end
 
   session.last_input_time = vim.uv.now()
   session.change_seq = session.change_seq + 1

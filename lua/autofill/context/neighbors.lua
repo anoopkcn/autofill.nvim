@@ -8,6 +8,10 @@ local snapshot_cache = {}
 local candidate_generation = 0
 local IMPORT_SCAN_LINES = 80
 local SNAPSHOT_LINE_LIMIT = 40
+local SNAPSHOT_CACHE_MAX = 32
+
+local readdir_cache = {}
+local READDIR_TTL_MS = 3000
 
 local SUPPORTED_IMPORT_FILETYPES = {
   go = true,
@@ -52,6 +56,17 @@ local function current_dir_for_path(path)
   return normalize_path(vim.fn.fnamemodify(path, ':h'))
 end
 
+local function get_readdir(dir)
+  local cached = readdir_cache[dir]
+  if cached and (vim.uv.now() - cached.time) < READDIR_TTL_MS then
+    return cached.entries
+  end
+  local ok, entries = pcall(vim.fn.readdir, dir)
+  if not ok or type(entries) ~= 'table' then entries = {} end
+  readdir_cache[dir] = { entries = entries, time = vim.uv.now() }
+  return entries
+end
+
 local function basename_without_extension(path)
   return vim.fn.fnamemodify(path, ':t:r')
 end
@@ -91,8 +106,8 @@ local function directory_signature(dir, extension_set, scan_limit)
     return ''
   end
 
-  local ok, entries = pcall(vim.fn.readdir, dir)
-  if not ok or type(entries) ~= 'table' then
+  local entries = get_readdir(dir)
+  if #entries == 0 then
     return ''
   end
 
@@ -349,8 +364,8 @@ local function score_candidate(path, current_dir, same_filetype, import_names)
   return score
 end
 
-local function build_loaded_candidates(bufnr, current_name, current_dir, current_ft, import_names)
-  local bufs = vim.fn.getbufinfo({ buflisted = 1, bufloaded = 1 })
+local function build_loaded_candidates(bufnr, current_name, current_dir, current_ft, import_names, bufinfo)
+  local bufs = bufinfo or vim.fn.getbufinfo({ buflisted = 1, bufloaded = 1 })
   local candidates = {}
   local seen_paths = {}
 
@@ -376,8 +391,8 @@ local function build_loaded_candidates(bufnr, current_name, current_dir, current
   return candidates, seen_paths
 end
 
-local function loaded_buffer_signature(current_bufnr)
-  local bufs = vim.fn.getbufinfo({ buflisted = 1, bufloaded = 1 })
+local function loaded_buffer_signature(current_bufnr, bufinfo)
+  local bufs = bufinfo or vim.fn.getbufinfo({ buflisted = 1, bufloaded = 1 })
   local parts = {}
 
   for _, buf in ipairs(bufs) do
@@ -407,8 +422,8 @@ local function build_disk_candidates(current_name, current_dir, import_names, ex
     return candidates
   end
 
-  local ok, entries = pcall(vim.fn.readdir, current_dir)
-  if not ok or type(entries) ~= 'table' then
+  local entries = get_readdir(current_dir)
+  if #entries == 0 then
     return candidates
   end
 
@@ -439,8 +454,8 @@ local function build_disk_candidates(current_name, current_dir, import_names, ex
   return candidates
 end
 
-local function build_candidates(bufnr, current_name, current_dir, current_ft, import_names, nb_config)
-  local candidates, seen_paths = build_loaded_candidates(bufnr, current_name, current_dir, current_ft, import_names)
+local function build_candidates(bufnr, current_name, current_dir, current_ft, import_names, nb_config, bufinfo)
+  local candidates, seen_paths = build_loaded_candidates(bufnr, current_name, current_dir, current_ft, import_names, bufinfo)
   local extension_set = allowed_extension_set(current_name, current_ft)
 
   if nb_config.include_disk_files then
@@ -474,8 +489,9 @@ local function build_candidates(bufnr, current_name, current_dir, current_ft, im
 end
 
 local function get_candidates(bufnr, current_name, current_dir, current_ft, import_names, import_signature, extension_set, nb_config)
+  local bufinfo = vim.fn.getbufinfo({ buflisted = 1, bufloaded = 1 })
   local dir_sig = directory_signature(current_dir, extension_set, nb_config.disk_scan_limit or 32)
-  local loaded_sig = loaded_buffer_signature(bufnr)
+  local loaded_sig = loaded_buffer_signature(bufnr, bufinfo)
   local cached = candidate_cache[bufnr]
   if cached
     and cached.generation == candidate_generation
@@ -491,7 +507,7 @@ local function get_candidates(bufnr, current_name, current_dir, current_ft, impo
     return cached.candidates
   end
 
-  local candidates = build_candidates(bufnr, current_name, current_dir, current_ft, import_names, nb_config)
+  local candidates = build_candidates(bufnr, current_name, current_dir, current_ft, import_names, nb_config, bufinfo)
   candidate_cache[bufnr] = {
     generation = candidate_generation,
     import_signature = import_signature,
@@ -589,6 +605,19 @@ local function get_file_snapshot(candidate, budget)
     budget = budget,
     snapshot = snapshot,
   }
+
+  -- Evict file entries if snapshot_cache grows too large
+  local count = 0
+  for _ in pairs(snapshot_cache) do
+    count = count + 1
+  end
+  if count > SNAPSHOT_CACHE_MAX then
+    for key in pairs(snapshot_cache) do
+      if key:sub(1, 5) == 'file:' then
+        snapshot_cache[key] = nil
+      end
+    end
+  end
 
   return snapshot
 end
@@ -717,6 +746,12 @@ end
 
 function M.mark_candidates_dirty()
   candidate_generation = candidate_generation + 1
+  readdir_cache = {}
+  for key in pairs(snapshot_cache) do
+    if key:sub(1, 5) == 'file:' then
+      snapshot_cache[key] = nil
+    end
+  end
 end
 
 function M.clear(bufnr)

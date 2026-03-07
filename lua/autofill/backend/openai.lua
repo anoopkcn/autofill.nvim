@@ -91,7 +91,7 @@ function M.complete(ctx, opts)
     return
   end
 
-  local prompt_request = prompt.build_request(ctx)
+  local prompt_request = opts.prompt_request or prompt.build_request(ctx)
   local user_message = prompt_request.user_message
   util.log('debug', 'OpenAI prompt prepared (' .. #user_message .. ' chars, mode=' .. prompt_request.mode .. ')')
 
